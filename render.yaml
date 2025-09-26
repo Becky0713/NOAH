@@ -1,0 +1,20 @@
+# Render deployment configuration
+services:
+  - type: web
+    name: nyc-housing-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATA_PROVIDER
+        value: socrata
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: DEBUG
+        value: false
+      - key: SOCRATA_APP_TOKEN
+        value: your_token_here
+    healthCheckPath: /health

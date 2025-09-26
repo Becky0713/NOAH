@@ -1,0 +1,13 @@
+# Railway deployment configuration
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
+
+[env]
+DATA_PROVIDER = "socrata"
+HOST = "0.0.0.0"

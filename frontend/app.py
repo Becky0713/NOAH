@@ -9,7 +9,13 @@ import pydeck as pdk
 
 # Backend base URL - works for both local and deployed environments
 import os
+
+# Get backend URL from environment variable with fallback
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+
+# Log the backend URL for debugging (only in development)
+if os.getenv("DEBUG", "false").lower() == "true":
+    print(f"🔗 Backend URL: {BACKEND_URL}")
 
 
 @st.cache_data(show_spinner=False, ttl=60)
