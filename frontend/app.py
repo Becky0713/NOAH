@@ -7,11 +7,9 @@ import streamlit as st
 import pydeck as pdk
 
 
-# Backend base URL
-try:
-    BACKEND_URL = st.secrets.get("backend_url", "http://127.0.0.1:8000")
-except Exception:
-    BACKEND_URL = "http://127.0.0.1:8000"
+# Backend base URL - works for both local and deployed environments
+import os
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 
 @st.cache_data(show_spinner=False, ttl=60)
