@@ -159,7 +159,11 @@ def render_distribution(df: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="NYC Housing Hub", layout="wide")
+    st.set_page_config(
+        page_title="NYC Housing Hub", 
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
     
     # Render navigation bar
     render_navigation()
@@ -206,9 +210,37 @@ def main() -> None:
         # Field multi-select (from /metadata/fields)
         try:
             meta = fetch_field_metadata()
+            st.write(f"🔍 Debug - Metadata loaded: {len(meta)} fields")
         except Exception as exc:  # noqa: BLE001
             st.error(f"Failed to fetch field metadata: {exc}")
-            st.stop()
+            st.write("🔍 Debug - Using fallback field list")
+            # Fallback field list if metadata fails
+            meta = [
+                {"field_name": "community_board", "description": "Community board district"},
+                {"field_name": "census_tract", "description": "Census tract"},
+                {"field_name": "postcode", "description": "ZIP code"},
+                {"field_name": "bbl", "description": "Borough, Block, and Lot number"},
+                {"field_name": "bin", "description": "Building Identification Number"},
+                {"field_name": "council_district", "description": "City Council district"},
+                {"field_name": "neighborhood_tabulation_area", "description": "Neighborhood tabulation area"},
+                {"field_name": "project_name", "description": "Project name"},
+                {"field_name": "building_id", "description": "Building ID"},
+                {"field_name": "studio_units", "description": "Number of studio units"},
+                {"field_name": "_1_br_units", "description": "Number of 1-bedroom units"},
+                {"field_name": "_2_br_units", "description": "Number of 2-bedroom units"},
+                {"field_name": "_3_br_units", "description": "Number of 3-bedroom units"},
+                {"field_name": "extremely_low_income_units", "description": "Extremely low income units"},
+                {"field_name": "very_low_income_units", "description": "Very low income units"},
+                {"field_name": "low_income_units", "description": "Low income units"},
+                {"field_name": "moderate_income_units", "description": "Moderate income units"},
+                {"field_name": "middle_income_units", "description": "Middle income units"},
+                {"field_name": "other_income_units", "description": "Other income units"},
+                {"field_name": "counted_rental_units", "description": "Counted rental units"},
+                {"field_name": "counted_homeownership_units", "description": "Counted homeownership units"},
+                {"field_name": "reporting_construction_type", "description": "Construction type"},
+                {"field_name": "extended_affordability_status", "description": "Extended affordability status"},
+                {"field_name": "prevailing_wage_status", "description": "Prevailing wage status"},
+            ]
         all_fields = [m["field_name"] for m in meta]
 
         core_raw_fields = [
@@ -289,6 +321,35 @@ def main() -> None:
 
     with st.expander("View Data", expanded=False):
         st.dataframe(df_norm, width="stretch", hide_index=True)
+    
+    # Add glossary link as fallback
+    st.markdown("---")
+    st.markdown("### 📚 Data Field Glossary")
+    st.markdown("""
+    **Quick Reference:**
+    - **Total Units**: Total number of units in the building
+    - **Affordable Units**: Units counted toward affordable housing goals
+    - **Studio Units**: Number of studio apartments (0 bedrooms)
+    - **1-Bedroom Units**: Number of one-bedroom apartments
+    - **2-Bedroom Units**: Number of two-bedroom apartments
+    - **3-Bedroom Units**: Number of three-bedroom apartments
+    - **Extremely Low Income Units**: Units for households earning 0-30% of AMI
+    - **Very Low Income Units**: Units for households earning 31-50% of AMI
+    - **Low Income Units**: Units for households earning 51-60% of AMI
+    - **Moderate Income Units**: Units for households earning 61-80% of AMI
+    - **Middle Income Units**: Units for households earning 81-120% of AMI
+    - **Community Board**: Local community board district
+    - **Census Tract**: U.S. Census tract
+    - **BBL**: Borough, Block, and Lot number
+    - **BIN**: Building Identification Number
+    - **Council District**: NYC Council district
+    - **Postcode**: ZIP code
+    - **Project Name**: Official project name
+    - **Building ID**: Unique building identifier
+    """)
+    
+    if st.button("📖 View Complete Glossary", type="secondary"):
+        st.info("For the complete glossary with all 35+ field definitions, please check the navigation bar at the top of the page or visit the Glossary page directly.")
 
 
 if __name__ == "__main__":
