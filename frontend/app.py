@@ -231,11 +231,21 @@ def main() -> None:
     
     # Extract additional columns selected by user from _raw, append to display table
     extra_cols: List[str] = selected_optional
+    st.write(f"🔍 Debug - Selected optional fields: {extra_cols}")
+    
     if "_raw" in df_norm.columns and extra_cols:
         raw_df = pd.json_normalize(df_norm.pop("_raw"))
+        st.write(f"🔍 Debug - Raw data columns: {list(raw_df.columns)}")
+        
         for col in extra_cols:
             if col in raw_df.columns:
                 df_norm[col] = raw_df[col]
+                st.write(f"✅ Added field: {col}")
+            else:
+                st.write(f"❌ Field not found: {col}")
+    else:
+        st.write(f"🔍 Debug - _raw column exists: {'_raw' in df_norm.columns}")
+        st.write(f"🔍 Debug - extra_cols: {extra_cols}")
 
     # Map + Distribution
     left, right = st.columns((2, 1))
