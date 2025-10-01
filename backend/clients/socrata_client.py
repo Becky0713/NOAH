@@ -35,10 +35,10 @@ class SocrataHousingClient(BaseHousingClient):
         return {
             "id": item.get(settings.socrata_field_id),
             "address": item.get(settings.socrata_field_address),
-            "latitude": self._to_float(item.get(settings.socrata_field_latitude)),
-            "longitude": self._to_float(item.get(settings.socrata_field_longitude)),
-            "bedrooms": self._to_int(item.get(settings.socrata_field_bedrooms)),
-            "bathrooms": self._to_float(item.get(settings.socrata_field_bathrooms)),
+            "latitude": None,  # This dataset doesn't have coordinates
+            "longitude": None,  # This dataset doesn't have coordinates
+            "bedrooms": None,  # This dataset doesn't have bedroom info
+            "bathrooms": None,  # This dataset doesn't have bathroom info
             "rent": self._to_float(item.get(settings.socrata_field_rent)),
             "source": "socrata",
         }
@@ -58,13 +58,11 @@ class SocrataHousingClient(BaseHousingClient):
             return None
 
     async def fetch_region_summary(self, region_id: str) -> Dict[str, Any]:
-        # Simplified summary - just count records for the region
+        # This dataset doesn't have borough/region filtering, so return total counts
         url = self._dataset_url()
-        region_field = settings.socrata_field_region
-        where = f"{region_field} = '{region_id}'"
-
-        # Count statistics
-        params_count = {"$select": "count(1) as listing_count", "$where": where}
+        
+        # Count total projects
+        params_count = {"$select": "count(1) as listing_count"}
         resp_count = await self._get_with_retries(url, headers=self._headers(), params=params_count)
         data_count = resp_count.json()
         listing_count = int(data_count[0].get("listing_count", 0)) if data_count and len(data_count) > 0 else 0
@@ -80,9 +78,8 @@ class SocrataHousingClient(BaseHousingClient):
 
     async def fetch_listings(self, region_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         url = self._dataset_url()
-        region_field = settings.socrata_field_region
-        where = f"{region_field} = '{region_id}'"
-        params = {"$where": where, "$limit": limit, "$order": f"{settings.socrata_field_rent} DESC"}
+        # This dataset doesn't have region filtering, so get all projects
+        params = {"$limit": limit, "$order": f"{settings.socrata_field_rent} DESC"}
         resp = await self._get_with_retries(url, headers=self._headers(), params=params)
         data = resp.json()
         return [self._normalize_listing(item) for item in data]

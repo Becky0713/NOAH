@@ -23,15 +23,15 @@ class Settings(BaseSettings):
     socrata_base_url: str = "https://data.cityofnewyork.us"
     socrata_app_token: Optional[str] = None
     # Dataset and field mappings for normalization
-    socrata_dataset_id: Optional[str] = None
-    socrata_field_id: str = "id"
-    socrata_field_address: str = "address"
-    socrata_field_latitude: str = "latitude"
-    socrata_field_longitude: str = "longitude"
-    socrata_field_bedrooms: str = "bedrooms"
-    socrata_field_bathrooms: str = "bathrooms"
+    socrata_dataset_id: Optional[str] = "hq68-rnsi"
+    socrata_field_id: str = "project_id"
+    socrata_field_address: str = "project_name"  # 使用项目名称作为地址
+    socrata_field_latitude: str = "latitude"  # 这个数据集没有坐标
+    socrata_field_longitude: str = "longitude"  # 这个数据集没有坐标
+    socrata_field_bedrooms: str = "bedrooms"  # 这个数据集没有卧室信息
+    socrata_field_bathrooms: str = "bathrooms"  # 这个数据集没有浴室信息
     socrata_field_rent: str = "total_units"  # 使用total_units代替rent
-    socrata_field_region: str = "borough"  # 用于按区域筛选（如 borough/neighborhood）
+    socrata_field_region: str = "borough"  # 这个数据集没有borough字段
 
     # Census (placeholder)
     census_api_key: Optional[str] = None

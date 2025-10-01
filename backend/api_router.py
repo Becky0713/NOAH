@@ -73,7 +73,7 @@ async def list_fields(client=Depends(get_client)) -> List[FieldMetadata]:
 @router.get("/v1/records", tags=["housing"])
 async def list_records(
     fields: str = Query(
-        default="house_number,street_name,latitude,longitude,borough,total_units,affordable_units,project_start_date,project_completion_date",
+        default="house_number,street_name,latitude,longitude,borough,total_units,all_counted_units,project_start_date,project_completion_date",
         description="Comma-separated field names that will be merged with core fields",
     ),
     limit: int = Query(default=100, ge=1, le=1000),
@@ -128,7 +128,7 @@ async def list_records(
                 "longitude": _safe_float(row.get("longitude")),
                 "region": row.get("borough"),
                 "total_units": _safe_int(row.get("total_units")),
-                "affordable_units": _safe_int(row.get("affordable_units")),
+                "affordable_units": _safe_int(row.get("all_counted_units")),
                 "project_start_date": row.get("project_start_date"),
                 "project_completion_date": row.get("project_completion_date"),
                 "_raw": row,
