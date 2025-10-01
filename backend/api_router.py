@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .clients.example_client import ExampleHousingClient
 from .clients.socrata_client import SocrataHousingClient
+from .clients.database_client import DatabaseHousingClient
 from .models import ApiError, FieldMetadata, Region, SummaryResponse
 
 
@@ -19,7 +20,9 @@ async def get_client():
         raise HTTPException(status_code=500, detail="HTTP client not initialized")
 
     provider = settings.data_provider.lower()
-    if provider == "socrata":
+    if provider == "database":
+        return DatabaseHousingClient()
+    elif provider == "socrata":
         return SocrataHousingClient(http_client)
     # elif provider == "census":
     #     return CensusHousingClient(http_client)
@@ -152,6 +155,19 @@ def _safe_int(v):
         return int(float(v)) if v is not None and v != "" else None
     except Exception:  # noqa: BLE001
         return None
+
+
+@router.get("/database/stats", tags=["database"])
+async def get_database_stats(client=Depends(get_client)):
+    """Get database statistics"""
+    if not hasattr(client, "get_database_stats"):
+        raise HTTPException(status_code=400, detail="Database stats not supported for current provider")
+    
+    try:
+        stats = await client.get_database_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
 
