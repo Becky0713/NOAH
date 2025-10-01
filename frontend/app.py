@@ -189,7 +189,7 @@ def main() -> None:
             "longitude",
             "borough",
             "total_units",
-            "affordable_units",
+            "all_counted_units",
             "project_start_date",
             "project_completion_date",
         ]
