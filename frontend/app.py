@@ -122,7 +122,7 @@ def render_map(df: pd.DataFrame) -> None:
     }
 
     view_state = pdk.ViewState(latitude=midpoint[0], longitude=midpoint[1], zoom=11, pitch=0)
-    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=tooltip), width="stretch")
+    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=tooltip))
 
 
 def render_distribution(df: pd.DataFrame) -> None:
