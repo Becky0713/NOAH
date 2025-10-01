@@ -7,9 +7,11 @@ A comprehensive dashboard for exploring New York City affordable housing data, b
 ### Backend API (FastAPI)
 - **Metadata Endpoint**: `/metadata/fields` - Returns all 41 available fields with descriptions
 - **Records Endpoint**: `/v1/records` - Supports multi-dimensional filtering and pagination
+- **Database Integration**: PostgreSQL + PostGIS for high-performance data storage
 - **Socrata Integration**: Full integration with NYC Open Data (Socrata) dataset hg8x-zxpr
+- **Data Pipeline**: Automated data ingestion and synchronization
 - **Error Handling**: Comprehensive error handling and rate limiting protection
-- **Database Support**: SQLite integration for local data storage and ingestion
+- **Multiple Data Sources**: Switch between database, Socrata API, or mock data
 
 ### Frontend Dashboard (Streamlit)
 - **Multi-dimensional Filtering**: Borough, unit count range, project start date range
@@ -17,6 +19,8 @@ A comprehensive dashboard for exploring New York City affordable housing data, b
 - **Interactive Map**: Point size and color based on unit count with hover details
 - **Data Visualization**: Unit count distribution charts and data tables
 - **Real-time Queries**: All filters apply in real-time with pagination support
+- **Navigation System**: Dashboard, Glossary, About pages with seamless navigation
+- **Responsive Design**: Mobile-friendly interface with accordion views
 
 ### Data Sources
 - **NYC Open Data (Socrata)**: Dataset hg8x-zxpr (Affordable Housing Production by Building)
@@ -28,6 +32,7 @@ A comprehensive dashboard for exploring New York City affordable housing data, b
 ### Prerequisites
 - Python 3.9+
 - Virtual environment (recommended)
+- PostgreSQL with PostGIS (for database integration)
 
 ### Installation
 
@@ -52,13 +57,42 @@ pip install -r requirements.txt
 4. **Configure environment variables**
 Create a `.env` file in the project root:
 ```env
-DATA_PROVIDER=socrata
+# Data Provider Selection
+DATA_PROVIDER=database  # or "socrata" for direct API
+
+# Database Configuration (for database provider)
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=your_password
+DB_NAME=nyc_housing
+
+# Socrata API Configuration
 SOCRATA_BASE_URL=https://data.cityofnewyork.us
 SOCRATA_DATASET_ID=hg8x-zxpr
 SOCRATA_APP_TOKEN=your_app_token_here
 ```
 
 ### Running the Application
+
+#### Option 1: With Database Integration (Recommended)
+
+1. **Set up database**
+```bash
+# Start PostgreSQL + PostGIS
+# (Install PostgreSQL with PostGIS extension)
+
+# Initialize database and populate data
+python scripts/setup_database.py
+```
+
+2. **Start the application**
+```bash
+# Start both backend and frontend
+python scripts/start_local.py
+```
+
+#### Option 2: Direct API (No Database)
 
 1. **Start the backend**
 ```bash
@@ -72,10 +106,18 @@ source .venv/bin/activate
 streamlit run frontend/app.py --server.port=8501
 ```
 
-3. **Access the application**
+#### Option 3: Docker (Complete Stack)
+
+```bash
+# Start everything with database
+docker-compose -f docker-compose.dev.yml up
+```
+
+#### Access the Application
 - **Frontend Dashboard**: http://127.0.0.1:8501
 - **Backend API**: http://127.0.0.1:8000
 - **API Documentation**: http://127.0.0.1:8000/docs
+- **Database Stats**: http://127.0.0.1:8000/database/stats
 
 ### Data Ingestion
 
