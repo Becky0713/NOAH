@@ -1,0 +1,359 @@
+import json
+from typing import Any, Dict, List
+
+import pandas as pd
+import requests
+import streamlit as st
+import pydeck as pdk
+
+
+# Backend base URL - works for both local and deployed environments
+import os
+
+# Navigation helper
+def render_navigation():
+    """Render top navigation bar"""
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    
+    with col1:
+        if st.button("🏠 Dashboard", use_container_width=True):
+            st.rerun()
+    
+    with col2:
+        if st.button("📚 Glossary", use_container_width=True):
+            st.switch_page("pages/glossary.py")
+    
+    with col3:
+        if st.button("ℹ️ About", use_container_width=True):
+            st.switch_page("pages/about.py")
+    
+    with col4:
+        if st.button("🔗 API Docs", use_container_width=True):
+            st.info("API Documentation: https://nyc-housing-backend.onrender.com/docs")
+
+# Backend URL - directly use Render deployment
+BACKEND_URL = "https://nyc-housing-backend.onrender.com"
+
+# Log the backend URL for debugging
+print(f"🔗 Backend URL: {BACKEND_URL}")
+st.write(f"🔗 Backend URL: {BACKEND_URL}")
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def fetch_regions() -> List[Dict[str, Any]]:
+    resp = requests.get(f"{BACKEND_URL}/v1/regions", timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def fetch_summary(region_id: str, limit: int = 25) -> Dict[str, Any]:
+    params = {"region_id": region_id, "limit": limit}
+    resp = requests.get(f"{BACKEND_URL}/v1/housing/summary", params=params, timeout=20)
+    resp.raise_for_status()
+    return resp.json()
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_field_metadata() -> List[Dict[str, Any]]:
+    resp = requests.get(f"{BACKEND_URL}/metadata/fields", timeout=20)
+    resp.raise_for_status()
+    return resp.json()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def fetch_records(
+    fields: List[str], 
+    limit: int, 
+    borough: str = "",
+    min_units: int = 0,
+    max_units: int = 0,
+    start_date_from: str = "",
+    start_date_to: str = ""
+) -> List[Dict[str, Any]]:
+    params = {
+        "fields": ",".join(fields), 
+        "limit": limit,
+        "min_units": min_units,
+        "max_units": max_units,
+        "start_date_from": start_date_from,
+        "start_date_to": start_date_to
+    }
+    if borough:
+        params["borough"] = borough
+    resp = requests.get(f"{BACKEND_URL}/v1/records", params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def render_metrics(summary: Dict[str, Any]) -> None:
+    region_summary = summary.get("region_summary", {})
+    listing_count = region_summary.get("listing_count")
+    median_rent = region_summary.get("median_rent")
+    average_rent = region_summary.get("average_rent")
+    vacancy_rate = region_summary.get("vacancy_rate")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Listings", f"{listing_count:,}" if listing_count is not None else "-")
+    c2.metric("Median Rent", f"${median_rent:,.0f}" if median_rent else "-")
+    c3.metric("Average Rent", f"${average_rent:,.0f}" if average_rent else "-")
+    c4.metric("Vacancy Rate", f"{vacancy_rate:.1%}" if vacancy_rate is not None else "-")
+
+
+def listings_to_df(listings: List[Dict[str, Any]]) -> pd.DataFrame:
+    if not listings:
+        return pd.DataFrame(columns=["id", "address", "latitude", "longitude", "bedrooms", "bathrooms", "rent", "source"])
+    return pd.DataFrame(listings)
+
+
+def render_map(df: pd.DataFrame) -> None:
+    if df.empty or df[["latitude", "longitude"]].dropna().empty:
+        st.info("No geographic coordinates available for mapping.")
+        return
+
+    df_geo = df.dropna(subset=["latitude", "longitude"]).copy()
+    midpoint = (df_geo["latitude"].mean(), df_geo["longitude"].mean())
+
+    # Adjust point size and color based on unit count
+    df_geo["radius"] = df_geo["total_units"].fillna(1).apply(lambda x: max(20, min(200, x * 2)))
+    df_geo["color"] = df_geo["total_units"].fillna(0).apply(
+        lambda x: [255, 140, 0, 140] if x < 50 else [255, 69, 0, 140] if x < 200 else [255, 0, 0, 140]
+    )
+
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=df_geo,
+        get_position="[longitude, latitude]",
+        get_radius="radius",
+        radius_min_pixels=3,
+        radius_max_pixels=50,
+        get_fill_color="color",
+        pickable=True,
+    )
+
+    tooltip = {
+        "html": """
+        <b>{project_name}</b><br/>
+        Address: {address}<br/>
+        Borough: {region}<br/>
+        Postcode: {postcode}<br/>
+        Total Units: {total_units}<br/>
+        Affordable Units: {affordable_units}<br/>
+        Studio Units: {studio_units}<br/>
+        Project Start: {project_start_date}<br/>
+        Project Completion: {project_completion_date}
+        """,
+        "style": {"backgroundColor": "#262730", "color": "white"},
+    }
+
+    view_state = pdk.ViewState(latitude=midpoint[0], longitude=midpoint[1], zoom=11, pitch=0)
+    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=tooltip))
+
+
+def render_distribution(df: pd.DataFrame) -> None:
+    # Simple distribution example using total_units
+    if df.empty or ("total_units" not in df.columns) or df["total_units"].dropna().empty:
+        st.info("No unit count distribution data available.")
+        return
+    st.bar_chart(df["total_units"].dropna())
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="NYC Housing Hub", 
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Render navigation bar
+    render_navigation()
+    
+    st.title("NYC Housing Hub — Affordable Housing Dashboard")
+
+    with st.sidebar:
+        st.subheader("Filters")
+        try:
+            regions = fetch_regions()
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Failed to fetch regions: {exc}")
+            st.stop()
+
+        region_options = {r["name"]: r["id"] for r in regions}
+        selected_name = st.selectbox("Region", list(region_options.keys()), index=0)
+        selected_region = region_options[selected_name]
+        sample_size = st.slider("Sample Size (Records)", min_value=5, max_value=500, value=50, step=5)
+        
+        # Borough filtering (for /v1/records)
+        borough_options = ["", "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
+        selected_borough = st.selectbox("Borough Filter", borough_options, index=0, help="Empty value means no filter")
+        
+        # Unit count range filtering
+        st.subheader("Unit Count Filter")
+        col1, col2 = st.columns(2)
+        with col1:
+            min_units = st.number_input("Min Units", min_value=0, value=0, step=1)
+        with col2:
+            max_units = st.number_input("Max Units", min_value=0, value=0, step=1, help="0 means no limit")
+        
+        # Date range filtering
+        st.subheader("Project Start Date Filter")
+        col3, col4 = st.columns(2)
+        with col3:
+            start_date_from = st.date_input("Start Date (From)", value=None)
+        with col4:
+            start_date_to = st.date_input("Start Date (To)", value=None)
+        
+        # Convert dates to strings
+        start_date_from_str = start_date_from.strftime("%Y-%m-%d") if start_date_from else ""
+        start_date_to_str = start_date_to.strftime("%Y-%m-%d") if start_date_to else ""
+
+        # Field multi-select (from /metadata/fields)
+        try:
+            meta = fetch_field_metadata()
+            st.write(f"🔍 Debug - Metadata loaded: {len(meta)} fields")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Failed to fetch field metadata: {exc}")
+            st.write("🔍 Debug - Using fallback field list")
+            # Fallback field list if metadata fails
+            meta = [
+                {"field_name": "community_board", "description": "Community board district"},
+                {"field_name": "census_tract", "description": "Census tract"},
+                {"field_name": "postcode", "description": "ZIP code"},
+                {"field_name": "bbl", "description": "Borough, Block, and Lot number"},
+                {"field_name": "bin", "description": "Building Identification Number"},
+                {"field_name": "council_district", "description": "City Council district"},
+                {"field_name": "neighborhood_tabulation_area", "description": "Neighborhood tabulation area"},
+                {"field_name": "project_name", "description": "Project name"},
+                {"field_name": "building_id", "description": "Building ID"},
+                {"field_name": "studio_units", "description": "Number of studio units"},
+                {"field_name": "_1_br_units", "description": "Number of 1-bedroom units"},
+                {"field_name": "_2_br_units", "description": "Number of 2-bedroom units"},
+                {"field_name": "_3_br_units", "description": "Number of 3-bedroom units"},
+                {"field_name": "extremely_low_income_units", "description": "Extremely low income units"},
+                {"field_name": "very_low_income_units", "description": "Very low income units"},
+                {"field_name": "low_income_units", "description": "Low income units"},
+                {"field_name": "moderate_income_units", "description": "Moderate income units"},
+                {"field_name": "middle_income_units", "description": "Middle income units"},
+                {"field_name": "other_income_units", "description": "Other income units"},
+                {"field_name": "counted_rental_units", "description": "Counted rental units"},
+                {"field_name": "counted_homeownership_units", "description": "Counted homeownership units"},
+                {"field_name": "reporting_construction_type", "description": "Construction type"},
+                {"field_name": "extended_affordability_status", "description": "Extended affordability status"},
+                {"field_name": "prevailing_wage_status", "description": "Prevailing wage status"},
+            ]
+        all_fields = [m["field_name"] for m in meta]
+
+        core_raw_fields = [
+            "house_number",
+            "street_name",
+            "latitude",
+            "longitude",
+            "borough",
+            "total_units",
+            "all_counted_units",
+            "project_start_date",
+            "project_completion_date",
+            "studio_units",
+            "project_name",
+            "postcode",
+        ]
+        optional_fields = [f for f in all_fields if f not in core_raw_fields]
+        selected_optional = st.multiselect("Additional Fields", optional_fields, default=[])
+
+    # Backend /v1/housing/summary retained (example metrics), record data from /v1/records
+    try:
+        summary = fetch_summary(selected_region, limit=sample_size)
+    except Exception as exc:  # noqa: BLE001
+        st.warning(f"Sample summary fetch failed (doesn't affect record queries): {exc}")
+        summary = {"region_summary": {"listing_count": None, "median_rent": None, "average_rent": None, "vacancy_rate": None}}
+
+    render_metrics(summary)
+
+    select_fields = core_raw_fields + selected_optional
+    try:
+        records = fetch_records(
+            select_fields, 
+            limit=sample_size, 
+            borough=selected_borough,
+            min_units=min_units,
+            max_units=max_units,
+            start_date_from=start_date_from_str,
+            start_date_to=start_date_to_str
+        )
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Failed to fetch records: {exc}")
+        st.stop()
+
+    # Normalize to DataFrame (using standard keys provided by backend)
+    df_norm = pd.DataFrame(records)
+    
+    # Debug: Show data info
+    st.write(f"📊 Data loaded: {len(df_norm)} records")
+    if not df_norm.empty:
+        st.write(f"📍 Coordinates available: {df_norm[['latitude', 'longitude']].dropna().shape[0]} records")
+    
+    # Extract additional columns selected by user from _raw, append to display table
+    extra_cols: List[str] = selected_optional
+    st.write(f"🔍 Debug - Selected optional fields: {extra_cols}")
+    
+    if "_raw" in df_norm.columns and extra_cols:
+        raw_df = pd.json_normalize(df_norm.pop("_raw"))
+        st.write(f"🔍 Debug - Raw data columns: {list(raw_df.columns)}")
+        
+        for col in extra_cols:
+            if col in raw_df.columns:
+                df_norm[col] = raw_df[col]
+                st.write(f"✅ Added field: {col}")
+            else:
+                st.write(f"❌ Field not found: {col}")
+    else:
+        st.write(f"🔍 Debug - _raw column exists: {'_raw' in df_norm.columns}")
+        st.write(f"🔍 Debug - extra_cols: {extra_cols}")
+
+    # Map + Distribution
+    left, right = st.columns((2, 1))
+    with left:
+        st.subheader("Map")
+        render_map(df_norm)
+    with right:
+        st.subheader("Unit Count Distribution (Sample)")
+        render_distribution(df_norm)
+
+    with st.expander("View Data", expanded=False):
+        st.dataframe(df_norm, width="stretch", hide_index=True)
+    
+    # Add glossary link as fallback
+    st.markdown("---")
+    st.markdown("### 📚 Data Field Glossary")
+    st.markdown("""
+    **Quick Reference:**
+    - **Total Units**: Total number of units in the building
+    - **Affordable Units**: Units counted toward affordable housing goals
+    - **Studio Units**: Number of studio apartments (0 bedrooms)
+    - **1-Bedroom Units**: Number of one-bedroom apartments
+    - **2-Bedroom Units**: Number of two-bedroom apartments
+    - **3-Bedroom Units**: Number of three-bedroom apartments
+    - **Extremely Low Income Units**: Units for households earning 0-30% of AMI
+    - **Very Low Income Units**: Units for households earning 31-50% of AMI
+    - **Low Income Units**: Units for households earning 51-60% of AMI
+    - **Moderate Income Units**: Units for households earning 61-80% of AMI
+    - **Middle Income Units**: Units for households earning 81-120% of AMI
+    - **Community Board**: Local community board district
+    - **Census Tract**: U.S. Census tract
+    - **BBL**: Borough, Block, and Lot number
+    - **BIN**: Building Identification Number
+    - **Council District**: NYC Council district
+    - **Postcode**: ZIP code
+    - **Project Name**: Official project name
+    - **Building ID**: Unique building identifier
+    """)
+    
+    if st.button("📖 View Complete Glossary", type="secondary"):
+        st.info("For the complete glossary with all 35+ field definitions, please check the navigation bar at the top of the page or visit the Glossary page directly.")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
