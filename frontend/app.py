@@ -222,6 +222,12 @@ def main() -> None:
 
     # Normalize to DataFrame (using standard keys provided by backend)
     df_norm = pd.DataFrame(records)
+    
+    # Debug: Show data info
+    st.write(f"📊 Data loaded: {len(df_norm)} records")
+    if not df_norm.empty:
+        st.write(f"📍 Coordinates available: {df_norm[['latitude', 'longitude']].dropna().shape[0]} records")
+    
     # Extract additional columns selected by user from _raw, append to display table
     extra_cols: List[str] = selected_optional
     if "_raw" in df_norm.columns and extra_cols:
