@@ -5,6 +5,13 @@ Information about the NYC Housing Hub project
 
 import streamlit as st
 
+# Set page config for this page
+st.set_page_config(
+    page_title="NYC Housing Hub - About",
+    page_icon="ℹ️",
+    layout="wide"
+)
+
 def render_about_page():
     """Render the about page"""
     st.title("ℹ️ About NYC Housing Hub")

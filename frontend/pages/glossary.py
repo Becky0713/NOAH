@@ -9,6 +9,13 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 
+# Set page config for this page
+st.set_page_config(
+    page_title="NYC Housing Hub - Glossary",
+    page_icon="📚",
+    layout="wide"
+)
+
 def load_glossary_data() -> List[Dict[str, Any]]:
     """Load glossary data from JSON file"""
     try:
