@@ -188,8 +188,26 @@ def render_filter_panel():
 
 def render_map(data: pd.DataFrame):
     """Render interactive map using PyDeck"""
-    if data.empty or data[["latitude", "longitude"]].dropna().empty:
-        st.info("No geographic coordinates available for mapping.")
+    # Debug: Show available columns
+    st.write(f"🔍 Debug - Available columns: {list(data.columns)}")
+    
+    if data.empty:
+        st.info("No data available for mapping.")
+        return
+        
+    # Check if coordinate columns exist
+    coord_cols = ["latitude", "longitude"]
+    missing_coords = [col for col in coord_cols if col not in data.columns]
+    if missing_coords:
+        st.error(f"Missing coordinate columns: {missing_coords}")
+        st.write("Available columns:", list(data.columns))
+        return
+    
+    # Check for valid coordinates
+    coord_data = data[coord_cols].dropna()
+    if coord_data.empty:
+        st.info("No valid coordinates found in data.")
+        st.write("Sample data:", data[coord_cols].head())
         return
     
     # Filter data with coordinates
@@ -350,6 +368,10 @@ def main():
             if records:
                 df = pd.DataFrame(records)
                 st.write(f"📍 Showing {len(df)} projects")
+                
+                # Debug: Show sample data
+                st.write("🔍 Debug - Sample data structure:")
+                st.write(df.head(2))
                 
                 # Render map
                 render_map(df)
