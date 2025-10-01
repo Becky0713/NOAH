@@ -12,3 +12,6 @@ textColor = "#262730"
 
 [general]
 main_file = "frontend/app.py"
+
+[browser]
+gatherUsageStats = false

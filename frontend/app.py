@@ -10,6 +10,27 @@ import pydeck as pdk
 # Backend base URL - works for both local and deployed environments
 import os
 
+# Navigation helper
+def render_navigation():
+    """Render top navigation bar"""
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    
+    with col1:
+        if st.button("🏠 Dashboard", use_container_width=True):
+            st.rerun()
+    
+    with col2:
+        if st.button("📚 Glossary", use_container_width=True):
+            st.switch_page("pages/glossary.py")
+    
+    with col3:
+        if st.button("ℹ️ About", use_container_width=True):
+            st.switch_page("pages/about.py")
+    
+    with col4:
+        if st.button("🔗 API Docs", use_container_width=True):
+            st.info("API Documentation: https://nyc-housing-backend.onrender.com/docs")
+
 # Backend URL - directly use Render deployment
 BACKEND_URL = "https://nyc-housing-backend.onrender.com"
 
@@ -139,6 +160,10 @@ def render_distribution(df: pd.DataFrame) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="NYC Housing Hub", layout="wide")
+    
+    # Render navigation bar
+    render_navigation()
+    
     st.title("NYC Housing Hub — Affordable Housing Dashboard")
 
     with st.sidebar:
