@@ -10,9 +10,8 @@ import pydeck as pdk
 # Backend base URL - works for both local and deployed environments
 import os
 
-# Get backend URL from environment variable with fallback
-# For Streamlit Cloud, this will be set to your Render backend URL
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+# Backend URL - directly use Render deployment
+BACKEND_URL = "https://nyc-housing-backend.onrender.com"
 
 # Log the backend URL for debugging
 print(f"🔗 Backend URL: {BACKEND_URL}")
