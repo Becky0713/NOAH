@@ -36,9 +36,16 @@ class Settings(BaseSettings):
     # Census (placeholder)
     census_api_key: Optional[str] = None
 
-    # Database
+    # Database settings
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_user: str = "postgres"
+    db_password: str = "password"
+    db_name: str = "nyc_housing"
+    db_table_affordable_housing: str = "housing_projects"
+    
+    # Legacy SQLite settings (for backward compatibility)
     db_path: str = "./data/nyc_housing.db"
-    db_table_affordable_housing: str = "affordable_housing_buildings"
 
     # Default dataset for Socrata
     socrata_dataset_id: Optional[str] = "hg8x-zxpr"

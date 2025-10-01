@@ -116,7 +116,8 @@ def render_map(df: pd.DataFrame) -> None:
         Borough: {region}<br/>
         Total Units: {total_units}<br/>
         Affordable Units: {affordable_units}<br/>
-        Project Start: {project_start_date}
+        Project Start: {project_start_date}<br/>
+        Project Completion: {project_completion_date}
         """,
         "style": {"backgroundColor": "#262730", "color": "white"},
     }
