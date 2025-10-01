@@ -4,8 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .clients.example_client import ExampleHousingClient
 from .clients.socrata_client import SocrataHousingClient
-from .clients.database_client import DatabaseHousingClient
 from .models import ApiError, FieldMetadata, Region, SummaryResponse
+
+# Import database client only if available
+try:
+    from .clients.database_client import DatabaseHousingClient
+    DATABASE_AVAILABLE = True
+except ImportError:
+    DatabaseHousingClient = None
+    DATABASE_AVAILABLE = False
 
 
 router = APIRouter()
@@ -21,6 +28,11 @@ async def get_client():
 
     provider = settings.data_provider.lower()
     if provider == "database":
+        if not DATABASE_AVAILABLE:
+            raise HTTPException(
+                status_code=500, 
+                detail="Database provider requested but database dependencies not available. Please use 'socrata' or 'example' provider."
+            )
         return DatabaseHousingClient()
     elif provider == "socrata":
         return SocrataHousingClient(http_client)
@@ -160,6 +172,9 @@ def _safe_int(v):
 @router.get("/database/stats", tags=["database"])
 async def get_database_stats(client=Depends(get_client)):
     """Get database statistics"""
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=400, detail="Database dependencies not available")
+    
     if not hasattr(client, "get_database_stats"):
         raise HTTPException(status_code=400, detail="Database stats not supported for current provider")
     
