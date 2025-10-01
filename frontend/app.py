@@ -130,7 +130,7 @@ def render_distribution(df: pd.DataFrame) -> None:
     if df.empty or ("total_units" not in df.columns) or df["total_units"].dropna().empty:
         st.info("No unit count distribution data available.")
         return
-    st.bar_chart(df["total_units"].dropna(), width="stretch")
+    st.bar_chart(df["total_units"].dropna())
 
 
 def main() -> None:
