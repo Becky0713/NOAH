@@ -40,8 +40,10 @@ def render_glossary_page():
     """)
     
     # Add back to dashboard button
-    if st.button("← Back to Dashboard", type="secondary"):
-        st.switch_page("app.py")
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        if st.button("← Back to Dashboard", type="secondary", use_container_width=True):
+            st.switch_page("app.py")
     
     # Load glossary data
     glossary_data = load_glossary_data()
