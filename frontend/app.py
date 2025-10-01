@@ -112,10 +112,13 @@ def render_map(df: pd.DataFrame) -> None:
 
     tooltip = {
         "html": """
-        <b>{address}</b><br/>
+        <b>{project_name}</b><br/>
+        Address: {address}<br/>
         Borough: {region}<br/>
+        Postcode: {postcode}<br/>
         Total Units: {total_units}<br/>
         Affordable Units: {affordable_units}<br/>
+        Studio Units: {studio_units}<br/>
         Project Start: {project_start_date}<br/>
         Project Completion: {project_completion_date}
         """,
@@ -193,6 +196,9 @@ def main() -> None:
             "all_counted_units",
             "project_start_date",
             "project_completion_date",
+            "studio_units",
+            "project_name",
+            "postcode",
         ]
         optional_fields = [f for f in all_fields if f not in core_raw_fields]
         selected_optional = st.multiselect("Additional Fields", optional_fields, default=[])
