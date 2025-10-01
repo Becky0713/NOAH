@@ -30,8 +30,8 @@ class Settings(BaseSettings):
     socrata_field_longitude: str = "longitude"
     socrata_field_bedrooms: str = "bedrooms"
     socrata_field_bathrooms: str = "bathrooms"
-    socrata_field_rent: str = "rent"
-    socrata_field_region: str = "region"  # 用于按区域筛选（如 borough/neighborhood）
+    socrata_field_rent: str = "total_units"  # 使用total_units代替rent
+    socrata_field_region: str = "borough"  # 用于按区域筛选（如 borough/neighborhood）
 
     # Census (placeholder)
     census_api_key: Optional[str] = None

@@ -58,7 +58,7 @@ class SocrataHousingClient(BaseHousingClient):
             return None
 
     async def fetch_region_summary(self, region_id: str) -> Dict[str, Any]:
-        # Calculate listing_count and statistics (median/average) through two queries
+        # Simplified summary - just count records for the region
         url = self._dataset_url()
         region_field = settings.socrata_field_region
         where = f"{region_field} = '{region_id}'"
@@ -69,24 +69,12 @@ class SocrataHousingClient(BaseHousingClient):
         data_count = resp_count.json()
         listing_count = int(data_count[0].get("listing_count", 0)) if data_count and len(data_count) > 0 else 0
 
-        # Calculate median/average (some datasets may not support median, need approximation)
-        params_stats = {
-            "$select": "avg({rent}) as average_rent".format(rent=settings.socrata_field_rent)
-        }
-        params_stats["$where"] = where
-        resp_stats = await self._get_with_retries(url, headers=self._headers(), params=params_stats)
-        data_stats = resp_stats.json()
-        average_rent = float(data_stats[0].get("average_rent", 0)) if data_stats and len(data_stats) > 0 and data_stats[0].get("average_rent") else None
-
-        # Median is often missing in SoQL, need client-side approximation: can sample in fetch_listings, leaving empty for now
-        median_rent = None
-
         region = {"id": region_id, "name": region_id.replace("_", " ").title()}
         return {
             "region": region,
             "listing_count": listing_count,
-            "median_rent": median_rent,
-            "average_rent": average_rent,
+            "median_rent": None,  # Not applicable for housing units
+            "average_rent": None,  # Not applicable for housing units
             "vacancy_rate": None,
         }
 
