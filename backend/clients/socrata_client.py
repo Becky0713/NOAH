@@ -35,8 +35,8 @@ class SocrataHousingClient(BaseHousingClient):
         return {
             "id": item.get(settings.socrata_field_id),
             "address": item.get(settings.socrata_field_address),
-            "latitude": None,  # This dataset doesn't have coordinates
-            "longitude": None,  # This dataset doesn't have coordinates
+            "latitude": self._to_float(item.get("latitude")),  # Extract coordinates from raw data
+            "longitude": self._to_float(item.get("longitude")),  # Extract coordinates from raw data
             "bedrooms": None,  # This dataset doesn't have bedroom info
             "bathrooms": None,  # This dataset doesn't have bathroom info
             "rent": self._to_float(item.get(settings.socrata_field_rent)),
