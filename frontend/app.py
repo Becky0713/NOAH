@@ -86,7 +86,7 @@ def fetch_records(
 
 def render_top_navigation():
     """Render top navigation bar"""
-    col1, col2, col3 = st.columns([3, 1, 1])
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
     
     with col1:
         st.markdown("# 🏠 NYC Housing Hub")
@@ -98,6 +98,11 @@ def render_top_navigation():
     with col3:
         if st.button("ℹ️ About", use_container_width=True):
             st.switch_page("pages/about.py")
+    
+    with col4:
+        if st.button("📋 Info Panel", use_container_width=True):
+            st.session_state.show_info_card = not st.session_state.show_info_card
+            st.rerun()
 
 def render_filter_panel():
     """Render left filter panel"""
@@ -241,10 +246,18 @@ def render_map(data: pd.DataFrame):
     center_lat = df_geo["latitude"].mean()
     center_lon = df_geo["longitude"].mean()
     
-    # Adjust point size and color based on unit count
-    df_geo["radius"] = df_geo["total_units"].fillna(1).apply(lambda x: max(20, min(200, x * 2)))
-    df_geo["color"] = df_geo["total_units"].fillna(0).apply(
-        lambda x: [0, 255, 0, 140] if x < 50 else [255, 165, 0, 140] if x < 200 else [255, 0, 0, 140]
+    # Calculate affordability ratio for color coding
+    df_geo["affordability_ratio"] = df_geo.apply(
+        lambda row: (row.get("affordable_units", 0) / row.get("total_units", 1)) if row.get("total_units", 0) > 0 else 0, 
+        axis=1
+    )
+    
+    # Adjust point size based on total units
+    df_geo["radius"] = df_geo["total_units"].fillna(1).apply(lambda x: max(20, min(200, x * 1.5)))
+    
+    # Color based on affordability ratio (green = high affordability, red = low affordability)
+    df_geo["color"] = df_geo["affordability_ratio"].apply(
+        lambda x: [0, 255, 0, 140] if x > 0.7 else [255, 255, 0, 140] if x > 0.3 else [255, 0, 0, 140]
     )
     
     # Create PyDeck layer
@@ -264,9 +277,10 @@ def render_map(data: pd.DataFrame):
         "html": """
         <b>{project_name}</b><br/>
         Address: {house_number} {street_name}<br/>
-        Borough: {borough}<br/>
+        Borough: {region}<br/>
         Total Units: {total_units}<br/>
-        Affordable Units: {all_counted_units}<br/>
+        Affordable Units: {affordable_units}<br/>
+        Affordability: {affordability_ratio:.1%}<br/>
         Studio: {studio_units} | 1BR: {_1_br_units} | 2BR: {_2_br_units} | 3BR: {_3_br_units}
         """,
         "style": {"backgroundColor": "#262730", "color": "white"},
@@ -281,7 +295,7 @@ def render_map(data: pd.DataFrame):
     )
     
     # Render map
-    st.pydeck_chart(
+    map_result = st.pydeck_chart(
         pdk.Deck(
             layers=[layer], 
             initial_view_state=view_state, 
@@ -289,65 +303,83 @@ def render_map(data: pd.DataFrame):
         ),
         use_container_width=True
     )
+    
+    # Handle map interactions (simplified for now)
+    # Note: PyDeck doesn't support click events directly in Streamlit
+    # We'll use a simple table selection instead
+    if not df_geo.empty:
+        st.markdown("### 📊 Select a Project")
+        selected_rows = st.dataframe(
+            df_geo[['project_name', 'address', 'total_units', 'affordable_units', 'region']].head(20),
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="single-row",
+            key="project_selection"
+        )
+        
+        if selected_rows and selected_rows["selection"]["rows"]:
+            selected_idx = selected_rows["selection"]["rows"][0]
+            selected_project = df_geo.iloc[selected_idx].to_dict()
+            st.session_state.selected_project = selected_project
+            st.session_state.show_info_card = True
+            st.rerun()
 
-def render_info_card(data: pd.DataFrame, selected_fields: List[str]):
-    """Render right info card with selected fields"""
-    if data.empty:
-        st.info("No data available to display.")
-        return
+def render_info_card_section():
+    """Render the info card section as a floating panel"""
+    st.markdown("### 📋 Project Details")
     
-    st.markdown("### 📊 Project Information")
+    # Add a close button
+    if st.button("❌ Close", type="secondary", use_container_width=True):
+        st.session_state.show_info_card = False
+        st.session_state.selected_project = None
+        st.rerun()
     
-    # Show first few records
-    display_data = data.head(10)  # Show first 10 records
-    
-    for idx, row in display_data.iterrows():
-        with st.expander(f"🏠 {row.get('project_name', 'Unknown Project')}", expanded=False):
-            # Create columns for better layout
-            col1, col2 = st.columns(2)
+    if st.session_state.selected_project is not None:
+        # Display selected project details
+        project = st.session_state.selected_project
+        
+        # Basic Info Section
+        st.markdown("#### 📍 Basic Info")
+        st.write(f"**Project:** {project.get('project_name', 'N/A')}")
+        st.write(f"**Address:** {project.get('house_number', '')} {project.get('street_name', '')}")
+        st.write(f"**Borough:** {project.get('region', 'N/A')}")
+        st.write(f"**Postcode:** {project.get('postcode', 'N/A')}")
+        
+        # Units Info Section
+        st.markdown("#### 🏠 Units Info")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Total Units", project.get('total_units', 0))
+            st.metric("Affordable Units", project.get('affordable_units', 0))
+        with col2:
+            st.metric("Studio", project.get('studio_units', 0))
+            st.metric("1-Bedroom", project.get('_1_br_units', 0))
+        
+        # Timeline Section
+        st.markdown("#### 📅 Timeline")
+        st.write(f"**Start Date:** {project.get('project_start_date', 'N/A')}")
+        st.write(f"**Completion Date:** {project.get('project_completion_date', 'N/A')}")
+        
+        # Additional Info Section (if user confirmed new fields)
+        if st.session_state.get('fields_confirmed', False):
+            st.markdown("#### ℹ️ Additional Info")
+            additional_fields = [f for f in st.session_state.selected_fields 
+                               if f not in ['project_name', 'house_number', 'street_name', 'total_units', 
+                                          'all_counted_units', 'studio_units', '_1_br_units', '_2_br_units', 
+                                          '_3_br_units', 'project_start_date', 'project_completion_date', 'region', 'postcode']]
             
-            with col1:
-                st.markdown("**Basic Info:**")
-                st.write(f"**Address:** {row.get('house_number', '')} {row.get('street_name', '')}")
-                st.write(f"**Borough:** {row.get('borough', 'Unknown')}")
-                st.write(f"**Total Units:** {row.get('total_units', 0)}")
-                st.write(f"**Affordable Units:** {row.get('all_counted_units', 0)}")
-            
-            with col2:
-                st.markdown("**Unit Distribution:**")
-                st.write(f"**Studio:** {row.get('studio_units', 0)}")
-                st.write(f"**1-Bedroom:** {row.get('_1_br_units', 0)}")
-                st.write(f"**2-Bedroom:** {row.get('_2_br_units', 0)}")
-                st.write(f"**3-Bedroom:** {row.get('_3_br_units', 0)}")
-            
-            # Show additional fields if selected
-            additional_fields = [f for f in selected_fields if f not in [
-                'project_name', 'house_number', 'street_name', 'total_units', 
-                'all_counted_units', 'studio_units', '_1_br_units', '_2_br_units', '_3_br_units'
-            ]]
-            
-            if additional_fields:
-                st.markdown("**Additional Information:**")
-                for field in additional_fields:
-                    if field in row and pd.notna(row[field]):
-                        field_display = field.replace('_', ' ').title()
-                        st.write(f"**{field_display}:** {row[field]}")
-            
-            # Completion year
-            completion_date = row.get('project_completion_date', '')
-            if completion_date:
-                try:
-                    year = pd.to_datetime(completion_date).year
-                    st.write(f"**Completion Year:** {year}")
-                except:
-                    st.write(f"**Completion Date:** {completion_date}")
+            for field in additional_fields:
+                if field in project and project[field] is not None:
+                    st.write(f"**{field.replace('_', ' ').title()}:** {project[field]}")
+    else:
+        st.info("Click on a project marker on the map to view details.")
 
 def main():
     """Main application"""
     st.set_page_config(
         page_title="NYC Housing Hub",
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="collapsed"  # Start with collapsed sidebar
     )
     
     # Initialize session state
@@ -359,18 +391,28 @@ def main():
         ]
         st.session_state.fields_confirmed = True
     
+    if "show_info_card" not in st.session_state:
+        st.session_state.show_info_card = False
+    if "selected_project" not in st.session_state:
+        st.session_state.selected_project = None
+    
     # Top navigation
     render_top_navigation()
     
-    # Main layout
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col1:
-        # Left filter panel
+    # Collapsible filters in sidebar
+    with st.sidebar:
+        st.markdown("### 🔧 Filters")
         filter_params = render_filter_panel()
     
-    with col2:
-        # Center map
+    # Main layout: Map takes 70-75% width, info card takes 20-25%
+    if st.session_state.show_info_card:
+        col_map, col_info = st.columns([0.75, 0.25])
+    else:
+        col_map = st.container()
+        col_info = None
+    
+    with col_map:
+        # Center map - takes majority of screen
         st.markdown("### 🗺️ Interactive Map")
         
         # Fetch data
@@ -401,27 +443,10 @@ def main():
         except Exception as e:
             st.error(f"Failed to fetch data: {e}")
     
-    with col3:
-        # Right info card
-        try:
-            records = fetch_records(
-                st.session_state.selected_fields,
-                limit=filter_params["sample_size"],
-                borough=filter_params["borough"],
-                min_units=filter_params["min_units"],
-                max_units=filter_params["max_units"],
-                start_date_from=filter_params["start_date_from"],
-                start_date_to=filter_params["start_date_to"]
-            )
-            
-            if records:
-                df = pd.DataFrame(records)
-                render_info_card(df, st.session_state.selected_fields)
-            else:
-                st.info("No data available for info card.")
-                
-        except Exception as e:
-            st.error(f"Failed to load info card: {e}")
+    if col_info:
+        with col_info:
+            # Right info card - floating panel style
+            render_info_card_section()
 
 if __name__ == "__main__":
     main()
