@@ -225,10 +225,20 @@ def render_map(data: pd.DataFrame):
         st.write("Available columns:", list(data.columns))
         return
     
+    # Debug: Show data types and sample values
+    st.write("🔍 Debug - Data types:")
+    st.write(data[coord_cols].dtypes)
+    st.write("🔍 Debug - Sample values before conversion:")
+    st.write(data[coord_cols].head())
+    
     # Convert coordinate columns to numeric, handling string values
     for col in coord_cols:
         if col in data.columns:
             data[col] = pd.to_numeric(data[col], errors='coerce')
+    
+    # Debug: Show values after conversion
+    st.write("🔍 Debug - Sample values after conversion:")
+    st.write(data[coord_cols].head())
     
     # Check for valid coordinates
     coord_data = data[coord_cols].dropna()
@@ -432,6 +442,10 @@ def main():
             if records:
                 df = pd.DataFrame(records)
                 st.write(f"📍 Showing {len(df)} projects")
+                
+                # Debug: Show raw data structure
+                st.write("🔍 Debug - Raw data from backend:")
+                st.write(df.head(2))
                 
                 # Render map
                 render_map(df)
