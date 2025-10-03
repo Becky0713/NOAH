@@ -11,6 +11,7 @@ import pandas as pd
 import pydeck as pdk
 from typing import List, Dict, Any
 from pathlib import Path
+import time
 
 # Backend URL
 BACKEND_URL = "https://nyc-housing-backend.onrender.com"
@@ -27,17 +28,37 @@ def load_glossary_data() -> List[Dict[str, Any]]:
         st.error(f"Failed to load glossary data: {e}")
         return []
 
-# API functions
+# API functions with retry logic for Render cold starts
+def _make_request_with_retry(url: str, params: dict = None, max_retries: int = 3) -> requests.Response:
+    """Make HTTP request with retry logic for Render cold starts"""
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            return resp
+        except requests.exceptions.Timeout:
+            if attempt < max_retries - 1:
+                st.warning(f"Request timeout (attempt {attempt + 1}/{max_retries}). Retrying...")
+                time.sleep(2 ** attempt)  # Exponential backoff
+                continue
+            else:
+                raise
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                st.warning(f"Request failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
+                time.sleep(2 ** attempt)
+                continue
+            else:
+                raise
+
 @st.cache_data(show_spinner=False, ttl=60)
 def fetch_regions() -> List[Dict[str, Any]]:
-    resp = requests.get(f"{BACKEND_URL}/v1/regions", timeout=15)
-    resp.raise_for_status()
+    resp = _make_request_with_retry(f"{BACKEND_URL}/v1/regions")
     return resp.json()
 
 @st.cache_data(show_spinner=False, ttl=60)
 def fetch_field_metadata() -> List[Dict[str, Any]]:
-    resp = requests.get(f"{BACKEND_URL}/metadata/fields", timeout=20)
-    resp.raise_for_status()
+    resp = _make_request_with_retry(f"{BACKEND_URL}/metadata/fields")
     return resp.json()
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -60,8 +81,7 @@ def fetch_records(
     }
     if borough:
         params["borough"] = borough
-    resp = requests.get(f"{BACKEND_URL}/v1/records", params=params, timeout=30)
-    resp.raise_for_status()
+    resp = _make_request_with_retry(f"{BACKEND_URL}/v1/records", params=params)
     return resp.json()
 
 def render_top_navigation():
