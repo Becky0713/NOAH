@@ -387,7 +387,7 @@ def main():
     # Initialize session state
     if 'selected_fields' not in st.session_state:
         st.session_state.selected_fields = [
-            "project_name", "house_number", "street_name", "total_units", 
+            "project_name", "house_number", "street_name", "latitude", "longitude", "total_units", 
             "all_counted_units", "studio_units", "_1_br_units", "_2_br_units", 
             "_3_br_units", "project_completion_date"
         ]
