@@ -311,20 +311,24 @@ def render_map(data: pd.DataFrame):
     # We'll use a simple table selection instead
     if not df_geo.empty:
         st.markdown("### 📊 Select a Project")
-        selected_rows = st.dataframe(
+        # Display project selection table
+        st.dataframe(
             df_geo[['project_name', 'address', 'total_units', 'affordable_units', 'region']].head(20),
             use_container_width=True,
-            hide_index=True,
-            selection_mode="single-row",
-            key="project_selection"
+            hide_index=True
         )
         
-        if selected_rows and selected_rows["selection"]["rows"]:
-            selected_idx = selected_rows["selection"]["rows"][0]
-            selected_project = df_geo.iloc[selected_idx].to_dict()
-            st.session_state.selected_project = selected_project
-            st.session_state.show_info_card = True
-            st.rerun()
+        # Add project selection using selectbox
+        if not df_geo.empty:
+            project_options = [f"{row['project_name']} - {row['address']}" for idx, row in df_geo.head(20).iterrows()]
+            selected_option = st.selectbox("Select a project to view details:", ["None"] + project_options)
+            
+            if selected_option != "None":
+                selected_idx = project_options.index(selected_option)
+                selected_project = df_geo.iloc[selected_idx].to_dict()
+                st.session_state.selected_project = selected_project
+                st.session_state.show_info_card = True
+                st.rerun()
 
 def render_info_card_section():
     """Render the info card section as a floating panel"""
