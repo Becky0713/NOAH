@@ -79,13 +79,20 @@ def render_rent_burden_page():
     
     # Load data
     with st.spinner("Loading rent burden data..."):
-        df = fetch_rent_burden_data()
+        try:
+            df = fetch_rent_burden_data()
+        except Exception as e:
+            st.error(f"❌ Database connection error: {e}")
+            df = pd.DataFrame()
     
     if df.empty:
-        st.warning("⚠️ No rent burden data available. Please ensure the rent_burden table exists in your database.")
+        st.warning("⚠️ No rent burden data available.")
+        st.info("📋 **Quick Check:**")
+        st.text("1. Ensure rent_burden table exists in your database")
+        st.text("2. Set DB_* environment variables in Streamlit Secrets")
+        st.text("3. Verify database connection is working")
         
-        # Show database connection help
-        with st.expander("📋 Database Setup Help"):
+        with st.expander("📋 Show Database Connection Help"):
             st.markdown("""
             **Required Database Setup:**
             
@@ -95,20 +102,34 @@ def render_rent_burden_page():
                    geo_id TEXT PRIMARY KEY,
                    tract_name TEXT,
                    rent_burden_rate DECIMAL,
-                   severe_burden_rate DECIMAL,
-                   geometry GEOMETRY(POLYGON, 4326)
+                   severe_burden_rate DECIMAL
                );
                ```
             
-            2. **Load your rent burden data** into the table
-            
-            3. **Set environment variables:**
-               - `DB_HOST`: PostgreSQL host
-               - `DB_PORT`: PostgreSQL port (default: 5432)
-               - `DB_NAME`: Database name (default: noah_dashboard)
-               - `DB_USER`: Database user
-               - `DB_PASSWORD`: Database password
+            2. **Set Streamlit Secrets:**
+               ```toml
+               [secrets]
+               DB_HOST = "your-postgres-host"
+               DB_NAME = "noah_dashboard"
+               DB_USER = "your-username"
+               DB_PASSWORD = "your-password"
+               ```
             """)
+        
+        # Try to show raw connection test
+        with st.expander("🔧 Test Database Connection"):
+            if st.button("Test Connection"):
+                try:
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT version();")
+                    version = cursor.fetchone()
+                    st.success(f"✅ Connected! PostgreSQL version: {version[0]}")
+                    cursor.close()
+                    conn.close()
+                except Exception as e:
+                    st.error(f"❌ Connection failed: {e}")
+        
         st.stop()
     
     # Display summary statistics
@@ -145,7 +166,22 @@ def render_rent_burden_page():
     
     st.divider()
     
-    # GeoJSON loading section
+    # Show data first
+    st.subheader("📊 Rent Burden Data")
+    st.dataframe(df, use_container_width=True, height=400)
+    
+    # Download button
+    csv = df.to_csv(index=False)
+    st.download_button(
+        "📥 Download Data as CSV",
+        csv,
+        "rent_burden_data.csv",
+        "text/csv"
+    )
+    
+    st.divider()
+    
+    # GeoJSON loading section (optional for map visualization)
     geojson_path = Path(__file__).parent.parent / "data" / "nyc_tracts.geojson"
     geojson_data = None
     
@@ -153,20 +189,7 @@ def render_rent_burden_page():
         with st.spinner("Loading census tract boundaries..."):
             geojson_data = load_geojson(geojson_path)
     else:
-        st.warning("⚠️ GeoJSON file not found. Map visualization requires `nyc_tracts.geojson` file.")
-        
-        with st.expander("📥 How to get NYC Census Tracts GeoJSON"):
-            st.markdown("""
-            1. **NYC Open Data:**
-               - Visit: https://data.cityofnewyork.us/City-Government/2010-Census-Tracts/37yn-as6i
-               - Download as GeoJSON
-               - Save as `frontend/data/nyc_tracts.geojson`
-            
-            2. **US Census TIGER:**
-               - Visit: https://www.census.gov/cgi-bin/geo/shapefiles/
-               - Select "Census Tracts" and "New York County"
-               - Convert shapefile to GeoJSON using ogr2ogr
-            """)
+        st.info("💡 **Tip:** Add `nyc_tracts.geojson` to enable choropleth map visualization")
     
     # Visualization section
     if geojson_data and not df.empty:
