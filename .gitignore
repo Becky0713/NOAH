@@ -54,6 +54,9 @@ data/
 logs/
 *.log
 
+# Allow GeoJSON for visualization
+!frontend/data/nyc_tracts.geojson
+
 # Streamlit
 .streamlit/secrets.toml
 
