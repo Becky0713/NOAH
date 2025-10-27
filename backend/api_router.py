@@ -185,4 +185,37 @@ async def get_database_stats(client=Depends(get_client)):
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
+@router.get("/rent-burden", tags=["rent-burden"])
+async def get_rent_burden_data():
+    """Get rent burden data for choropleth visualization"""
+    try:
+        import psycopg2
+        from ..config import settings
+        
+        conn = psycopg2.connect(
+            host=settings.db_host,
+            port=settings.db_port,
+            dbname=settings.db_name,
+            user=settings.db_user,
+            password=settings.db_password
+        )
+        
+        query = """
+        SELECT 
+            geo_id,
+            tract_name,
+            rent_burden_rate,
+            severe_burden_rate
+        FROM rent_burden
+        WHERE rent_burden_rate IS NOT NULL;
+        """
+        
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        return df.to_dict('records')
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching rent burden data: {str(e)}")
+
+
 
