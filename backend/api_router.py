@@ -186,10 +186,11 @@ async def get_database_stats(client=Depends(get_client)):
 
 
 @router.get("/rent-burden", tags=["rent-burden"])
-async def get_rent_burden_data():
+def get_rent_burden_data():
     """Get rent burden data for choropleth visualization"""
     try:
         import psycopg2
+        import pandas as pd
         from ..config import settings
         
         conn = psycopg2.connect(
