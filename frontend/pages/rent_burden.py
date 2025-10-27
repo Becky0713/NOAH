@@ -58,8 +58,26 @@ def fetch_rent_burden_data():
         conn.close()
         return df
     except Exception as e:
-        st.error(f"❌ Database connection error: {e}")
-        return pd.DataFrame()
+        st.warning(f"⚠️ Database not available: {e}")
+        st.info("📋 Using sample data for demonstration")
+        
+        # Return sample data for demonstration
+        return pd.DataFrame({
+            'geo_id': [
+                '36061000100', '36061000200', '36061000300', 
+                '36061000400', '36061000500', '36061000600',
+                '36061000700', '36061000800', '36061000900', '36061001000'
+            ],
+            'tract_name': [
+                f'Census Tract {i+1}, Brooklyn' for i in range(10)
+            ],
+            'rent_burden_rate': [
+                0.45, 0.52, 0.38, 0.61, 0.34, 0.49, 0.56, 0.42, 0.58, 0.39
+            ],
+            'severe_burden_rate': [
+                0.23, 0.28, 0.18, 0.32, 0.16, 0.25, 0.30, 0.21, 0.31, 0.19
+            ]
+        })
 
 def load_geojson(geojson_path):
     """Load GeoJSON file"""
@@ -99,50 +117,7 @@ def render_rent_burden_page():
             df = pd.DataFrame()
     
     if df.empty:
-        st.warning("⚠️ No rent burden data available.")
-        st.info("📋 **Quick Check:**")
-        st.text("1. Ensure rent_burden table exists in your database")
-        st.text("2. Set DB_* environment variables in Streamlit Secrets")
-        st.text("3. Verify database connection is working")
-        
-        with st.expander("📋 Show Database Connection Help"):
-            st.markdown("""
-            **Required Database Setup:**
-            
-            1. **Create the `rent_burden` table:**
-               ```sql
-               CREATE TABLE rent_burden (
-                   geo_id TEXT PRIMARY KEY,
-                   tract_name TEXT,
-                   rent_burden_rate DECIMAL,
-                   severe_burden_rate DECIMAL
-               );
-               ```
-            
-            2. **Set Streamlit Secrets:**
-               ```toml
-               [secrets]
-               DB_HOST = "your-postgres-host"
-               DB_NAME = "noah_dashboard"
-               DB_USER = "your-username"
-               DB_PASSWORD = "your-password"
-               ```
-            """)
-        
-        # Try to show raw connection test
-        with st.expander("🔧 Test Database Connection"):
-            if st.button("Test Connection"):
-                try:
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT version();")
-                    version = cursor.fetchone()
-                    st.success(f"✅ Connected! PostgreSQL version: {version[0]}")
-                    cursor.close()
-                    conn.close()
-                except Exception as e:
-                    st.error(f"❌ Connection failed: {e}")
-        
+        st.warning("⚠️ No data available")
         st.stop()
     
     # Display summary statistics
