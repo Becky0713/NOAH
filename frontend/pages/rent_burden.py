@@ -19,14 +19,27 @@ st.set_page_config(
 )
 
 def get_db_connection():
-    """Get database connection from environment variables"""
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=os.getenv("DB_PORT", "5432"),
-        dbname=os.getenv("DB_NAME", "noah_dashboard"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", "")
-    )
+    """Get database connection from environment variables or secrets"""
+    import streamlit as st
+    
+    # Try to get from Streamlit secrets first
+    try:
+        return psycopg2.connect(
+            host=st.secrets.get("DB_HOST", os.getenv("DB_HOST", "localhost")),
+            port=int(st.secrets.get("DB_PORT", os.getenv("DB_PORT", "5432"))),
+            dbname=st.secrets.get("DB_NAME", os.getenv("DB_NAME", "noah_dashboard")),
+            user=st.secrets.get("DB_USER", os.getenv("DB_USER", "postgres")),
+            password=st.secrets.get("DB_PASSWORD", os.getenv("DB_PASSWORD", ""))
+        )
+    except Exception:
+        # Fallback to environment variables
+        return psycopg2.connect(
+            host=os.getenv("DB_HOST", "localhost"),
+            port=int(os.getenv("DB_PORT", "5432")),
+            dbname=os.getenv("DB_NAME", "noah_dashboard"),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", "")
+        )
 
 def fetch_rent_burden_data():
     """Fetch rent burden data from PostgreSQL"""
