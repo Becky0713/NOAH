@@ -209,14 +209,41 @@ def render_rent_burden_page():
     if geojson_data and not df.empty:
         st.subheader("🗺️ Rent Burden Choropleth Map")
         
+        # Debug GeoJSON structure
+        if geojson_data and len(geojson_data.get('features', [])) > 0:
+            first_feature = geojson_data['features'][0]
+            st.write("🔍 Debug - GeoJSON properties:", list(first_feature.get('properties', {}).keys()))
+            st.write("🔍 Debug - Sample data geo_ids:", df['geo_id'].head().tolist())
+        
         try:
             import plotly.express as px
+            
+            # Try different possible GEOID field names
+            possible_geoid_fields = [
+                "properties.GEOID", 
+                "properties.geoid", 
+                "properties.TRACTCE", 
+                "properties.tractce",
+                "properties.CT2010",
+                "properties.ct2010"
+            ]
+            
+            # Find the correct field
+            geoid_field = "properties.GEOID"  # default
+            if geojson_data and len(geojson_data.get('features', [])) > 0:
+                props = geojson_data['features'][0].get('properties', {})
+                for field in possible_geoid_fields:
+                    field_name = field.replace("properties.", "")
+                    if field_name in props:
+                        geoid_field = field
+                        st.write(f"✅ Using GeoJSON field: {field}")
+                        break
             
             # Create choropleth map
             fig = px.choropleth_mapbox(
                 df,
                 geojson=geojson_data,
-                featureidkey="properties.GEOID",
+                featureidkey=geoid_field,
                 locations="geo_id",
                 color="rent_burden_rate",
                 color_continuous_scale="Reds",
