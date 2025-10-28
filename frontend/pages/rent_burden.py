@@ -25,13 +25,13 @@ def get_db_connection():
     
     # Read from Streamlit secrets (lowercase keys)
     try:
-        # Streamlit secrets are accessed with lowercase keys
+        # Streamlit secrets with nested structure
         return psycopg2.connect(
-            host=st.secrets["db_host"],
-            port=int(st.secrets["db_port"]),
-            dbname=st.secrets["db_name"],
-            user=st.secrets["db_user"],
-            password=st.secrets["db_password"],
+            host=st.secrets["secrets"]["db_host"],
+            port=int(st.secrets["secrets"]["db_port"]),
+            dbname=st.secrets["secrets"]["db_name"],
+            user=st.secrets["secrets"]["db_user"],
+            password=st.secrets["secrets"]["db_password"],
             sslmode="require"
         )
     except KeyError as e:
