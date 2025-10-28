@@ -28,7 +28,8 @@ def get_db_connection():
             port=int(st.secrets["db_port"]),
             dbname=st.secrets["db_name"],
             user=st.secrets["db_user"],
-            password=st.secrets["db_password"]
+            password=st.secrets["db_password"],
+            sslmode="require"
         )
     except KeyError as e:
         st.error(f"❌ Missing secret: {e}")
