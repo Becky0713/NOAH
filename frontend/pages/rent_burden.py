@@ -20,6 +20,9 @@ st.set_page_config(
 
 def get_db_connection():
     """Get database connection from Streamlit secrets"""
+    # Debug: Show available secrets
+    st.write("🔍 Debug - Available secrets:", list(st.secrets.keys()))
+    
     # Read from Streamlit secrets (lowercase keys)
     try:
         # Streamlit secrets are accessed with lowercase keys
