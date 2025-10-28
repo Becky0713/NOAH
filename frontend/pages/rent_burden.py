@@ -20,24 +20,23 @@ st.set_page_config(
 
 def get_db_connection():
     """Get database connection from Streamlit secrets"""
-    # Try to get from Streamlit secrets first
+    # Read from Streamlit secrets (lowercase keys)
     try:
+        # Streamlit secrets are accessed with lowercase keys
         return psycopg2.connect(
-            host=st.secrets.get("DB_HOST", "localhost"),
-            port=st.secrets.get("DB_PORT", "5432"),
-            dbname=st.secrets.get("DB_NAME", "noah_dashboard"),
-            user=st.secrets.get("DB_USER", "postgres"),
-            password=st.secrets.get("DB_PASSWORD", "")
+            host=st.secrets["db_host"],
+            port=int(st.secrets["db_port"]),
+            dbname=st.secrets["db_name"],
+            user=st.secrets["db_user"],
+            password=st.secrets["db_password"]
         )
-    except (AttributeError, TypeError):
-        # Fallback to environment variables
-        return psycopg2.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=os.getenv("DB_PORT", "5432"),
-            dbname=os.getenv("DB_NAME", "noah_dashboard"),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD", "")
-        )
+    except KeyError as e:
+        st.error(f"❌ Missing secret: {e}")
+        st.error("Please add your database credentials to Streamlit Secrets")
+        st.stop()
+    except Exception as e:
+        st.error(f"❌ Failed to read secrets: {e}")
+        st.stop()
 
 def fetch_rent_burden_data():
     """Fetch rent burden data from PostgreSQL"""
