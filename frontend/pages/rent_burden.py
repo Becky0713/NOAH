@@ -133,6 +133,13 @@ def render_rent_burden_page():
     # Display summary statistics
     st.subheader("📊 Summary Statistics by Borough")
     
+    # Add definition comments
+    st.markdown("""
+    **Cost Burden (Rent Burden):** Households paying more than 30% of income toward gross rent (Rent / Income > 0.30)
+    
+    **Severe Cost Burden (Severe Rent Burden):** Households paying more than 50% of income toward gross rent (Rent / Income > 0.50)
+    """)
+    
     # Create metrics
     col1, col2, col3, col4, col5 = st.columns(5)
     metrics_data = []
@@ -207,18 +214,6 @@ def render_rent_burden_page():
     )
     
     st.plotly_chart(fig, use_container_width=True)
-    
-    # Data table
-    st.subheader("📋 Detailed Statistics")
-    
-    # Format for display
-    display_df = borough_stats.copy()
-    display_df['Rent Burden Rate'] = display_df['rent_burden_rate'].apply(lambda x: f"{x:.2%}")
-    display_df['Severe Burden Rate'] = display_df['severe_burden_rate'].apply(lambda x: f"{x:.2%}")
-    display_df = display_df[['borough', 'Rent Burden Rate', 'Severe Burden Rate']]
-    display_df.columns = ['Borough', 'Rent Burden Rate', 'Severe Burden Rate']
-    
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
     
     # Download button
     csv = borough_stats.to_csv(index=False)
