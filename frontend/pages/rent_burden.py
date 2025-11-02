@@ -255,6 +255,12 @@ def render_income_rent_distribution():
     
     st.plotly_chart(fig, use_container_width=True)
     
+    # Add note below the chart
+    st.markdown("""
+    **Note:** Some high-income households are classified as "rent-burdened" under the ACS definition (>30% of income on rent). 
+    However, this does not necessarily indicate housing stress — many such cases reflect voluntary spending on high-end rentals or income-reporting effects.
+    """)
+    
     # Download button
     csv_download = aggregated.to_csv(index=False)
     st.download_button(
