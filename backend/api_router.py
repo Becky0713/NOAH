@@ -138,10 +138,12 @@ async def list_records(
             address = (hn + " " + sn).strip() if hn or sn else None
         result.append(
             {
+                "project_id": row.get("project_id"),
                 "address": address,
                 "latitude": _safe_float(row.get("latitude")),
                 "longitude": _safe_float(row.get("longitude")),
                 "region": row.get("borough"),
+                "borough": row.get("borough"),
                 "total_units": _safe_int(row.get("total_units")),
                 "affordable_units": _safe_int(row.get("all_counted_units")),
                 "project_start_date": row.get("project_start_date"),
