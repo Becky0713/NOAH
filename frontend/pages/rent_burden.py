@@ -55,53 +55,22 @@ def fetch_rent_burden_data():
         st.error(f"❌ Database connection error: {e}")
         return pd.DataFrame()
 
-def extract_borough_from_geo_id(geo_id):
-    """Extract borough name from GEOID"""
-    # GEOID format: 0600000US3600508510
-    # County codes:
-    # 005 = Bronx County
-    # 047 = Kings County (Brooklyn)
-    # 061 = New York County (Manhattan)
-    # 081 = Queens County
-    # 085 = Richmond County (Staten Island)
-    
-    if not geo_id or len(str(geo_id)) < 15:
-        return None
-    
-    geo_id_str = str(geo_id)
-    # Extract county code (positions 9-11)
-    county_code = geo_id_str[9:12] if len(geo_id_str) > 11 else None
-    
-    borough_map = {
-        "005": "Bronx",
-        "047": "Brooklyn",
-        "061": "Manhattan",
-        "081": "Queens",
-        "085": "Staten Island"
-    }
-    
-    return borough_map.get(county_code)
-
 def aggregate_by_borough(df):
     """Aggregate rent burden data by borough"""
-    # Extract borough from geo_id
-    def get_borough(geo_id):
-        if not geo_id or len(str(geo_id)) < 15:
+    # Extract borough from tract_name
+    # Format: "Bronx borough, Bronx County, New York"
+    def get_borough_from_tract_name(tract_name):
+        if not tract_name:
             return None
-        geo_id_str = str(geo_id)
-        county_code = geo_id_str[9:12] if len(geo_id_str) > 11 else None
-        
-        borough_map = {
-            "005": "Bronx",
-            "047": "Brooklyn",
-            "061": "Manhattan",
-            "081": "Queens",
-            "085": "Staten Island"
-        }
-        return borough_map.get(county_code)
+        tract_str = str(tract_name)
+        # Extract text before " borough"
+        if " borough" in tract_str:
+            borough = tract_str.split(" borough")[0].strip()
+            return borough
+        return None
     
-    # Add borough column
-    df['borough'] = df['geo_id'].apply(get_borough)
+    # Add borough column from tract_name
+    df['borough'] = df['tract_name'].apply(get_borough_from_tract_name)
     
     # Filter out None boroughs
     df = df[df['borough'].notna()]
@@ -156,8 +125,8 @@ def render_rent_burden_page():
     borough_stats = aggregate_by_borough(df)
     
     if borough_stats.empty:
-        st.warning("⚠️ Could not extract borough information from geo_id.")
-        st.info("Please ensure geo_id follows format: 0600000US3600508510")
+        st.warning("⚠️ Could not extract borough information from tract_name.")
+        st.info("Please ensure tract_name follows format: 'Bronx borough, Bronx County, New York'")
         st.dataframe(df.head(10))
         st.stop()
     
