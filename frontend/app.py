@@ -61,8 +61,7 @@ def fetch_field_metadata() -> List[Dict[str, Any]]:
     resp = _make_request_with_retry(f"{BACKEND_URL}/metadata/fields")
     return resp.json()
 
-@st.cache_data(show_spinner=False, ttl=60)
-def fetch_records(
+def fetch_records_paginated(
     fields: List[str],
     limit: int,
     borough: str = "",
@@ -71,18 +70,56 @@ def fetch_records(
     start_date_from: str = "",
     start_date_to: str = ""
 ) -> List[Dict[str, Any]]:
-    params = {
-        "fields": ",".join(fields),
-        "limit": limit,
-        "min_units": min_units,
-        "max_units": max_units,
-        "start_date_from": start_date_from,
-        "start_date_to": start_date_to
-    }
-    if borough:
-        params["borough"] = borough
-    resp = _make_request_with_retry(f"{BACKEND_URL}/v1/records", params=params)
-    return resp.json()
+    """Fetch records with pagination support for large datasets"""
+    all_records = []
+    offset = 0
+    batch_size = 1000  # Fetch in batches of 1000
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    while len(all_records) < limit:
+        current_limit = min(batch_size, limit - len(all_records))
+        
+        status_text.text(f"Fetching data... {len(all_records)}/{limit} records")
+        progress_bar.progress(min(len(all_records) / limit, 1.0))
+        
+        params = {
+            "fields": ",".join(fields),
+            "limit": current_limit,
+            "offset": offset,
+            "min_units": min_units,
+            "max_units": max_units,
+            "start_date_from": start_date_from,
+            "start_date_to": start_date_to
+        }
+        if borough:
+            params["borough"] = borough
+        
+        resp = _make_request_with_retry(f"{BACKEND_URL}/v1/records", params=params)
+        batch = resp.json()
+        
+        if not batch:
+            break  # No more data
+        
+        all_records.extend(batch)
+        offset += len(batch)
+        
+        # If we got less than requested, we've reached the end
+        if len(batch) < current_limit:
+            break
+        
+        # Stop if we've reached the limit
+        if len(all_records) >= limit:
+            break
+    
+    progress_bar.progress(1.0)
+    status_text.text(f"✅ Loaded {len(all_records)} records")
+    time.sleep(0.5)  # Brief pause to show completion
+    progress_bar.empty()
+    status_text.empty()
+    
+    return all_records[:limit]  # Return exactly up to limit
 
 def fetch_median_income_data():
     """Fetch median household income data from database"""
@@ -152,7 +189,12 @@ def render_filter_panel():
             selected_region = "manhattan"
         
         # Sample size
-        sample_size = st.slider("Sample Size", min_value=10, max_value=1000, value=100, step=10)
+        # Sample size with option to show all
+        show_all = st.checkbox("Show All Projects (may take longer)", value=False)
+        if show_all:
+            sample_size = 10000  # Large number to fetch all (backend will handle pagination if needed)
+        else:
+            sample_size = st.slider("Sample Size", min_value=10, max_value=5000, value=500, step=50)
         
         # Borough filter
         borough_options = ["", "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
@@ -362,21 +404,62 @@ def render_map(data: pd.DataFrame):
     if not df_geo.empty:
         st.markdown("### 🔍 Search by Project ID")
         
-        # Get unique project IDs
-        project_ids = sorted(df_geo['project_id'].dropna().unique().tolist())
+        # Get unique project IDs for suggestions
+        project_ids = sorted([str(pid) for pid in df_geo['project_id'].dropna().unique().tolist() if pid])
         
-        if project_ids:
-            selected_project_id = st.selectbox(
-                "Select Project ID to view details:",
-                options=["None"] + project_ids,
-                index=0
+        # Search input with autocomplete suggestions
+        search_col1, search_col2 = st.columns([3, 1])
+        
+        with search_col1:
+            search_query = st.text_input(
+                "Enter Project ID to search:",
+                placeholder="Type project ID or select from dropdown...",
+                key="project_id_search"
             )
+        
+        with search_col2:
+            # Quick select from dropdown
+            selected_from_dropdown = st.selectbox(
+                "Or select from list:",
+                options=["None"] + project_ids[:100],  # Limit dropdown to first 100 for performance
+                index=0,
+                key="project_id_dropdown"
+            )
+        
+        # Determine which search to use
+        search_id = None
+        if selected_from_dropdown != "None":
+            search_id = selected_from_dropdown
+        elif search_query and search_query.strip():
+            search_id = search_query.strip()
+        
+        # Search for project
+        if search_id:
+            matching_projects = df_geo[df_geo['project_id'].astype(str).str.contains(search_id, case=False, na=False)]
             
-            if selected_project_id != "None":
-                selected_project = df_geo[df_geo['project_id'] == selected_project_id].iloc[0].to_dict()
-                st.session_state.selected_project = selected_project
-                st.session_state.show_info_card = True
-                st.rerun()
+            if not matching_projects.empty:
+                if len(matching_projects) == 1:
+                    # Exact match, show it
+                    selected_project = matching_projects.iloc[0].to_dict()
+                    st.session_state.selected_project = selected_project
+                    st.session_state.show_info_card = True
+                    st.success(f"✅ Found Project ID: {search_id}")
+                    st.rerun()
+                else:
+                    # Multiple matches, show list
+                    st.info(f"Found {len(matching_projects)} matching projects. Select one:")
+                    match_options = [f"{row.get('project_id', 'N/A')} - {row.get('project_name', 'N/A')}" 
+                                    for idx, row in matching_projects.head(10).iterrows()]
+                    selected_match = st.selectbox("Select project:", options=["None"] + match_options)
+                    
+                    if selected_match != "None":
+                        match_idx = match_options.index(selected_match)
+                        selected_project = matching_projects.iloc[match_idx].to_dict()
+                        st.session_state.selected_project = selected_project
+                        st.session_state.show_info_card = True
+                        st.rerun()
+            else:
+                st.warning(f"⚠️ No project found with ID: {search_id}")
         
         # Download CSV button
         st.markdown("### 📥 Download Data")
@@ -523,7 +606,8 @@ def main():
         
         # Fetch data
         try:
-            records = fetch_records(
+            # Fetch records with pagination
+            records = fetch_records_paginated(
                 st.session_state.selected_fields,
                 limit=filter_params["sample_size"],
                 borough=filter_params["borough"],
@@ -536,21 +620,36 @@ def main():
             if records:
                 df = pd.DataFrame(records)
                 
-                # Extract data from _raw field if available
+                # Extract data from _raw field - this contains ALL fields from Socrata API
                 if '_raw' in df.columns:
                     raw_data = df['_raw'].apply(lambda x: x if isinstance(x, dict) else {})
+                    
+                    # First, extract all available fields from raw data
+                    # Get all unique keys from all raw records
+                    all_keys = set()
+                    for raw in raw_data:
+                        if isinstance(raw, dict):
+                            all_keys.update(raw.keys())
+                    
                     # Extract all fields from raw data
-                    for col in ['project_id', 'project_name', 'house_number', 'street_name', 
-                               'borough', 'postcode', 'building_id', 'building_completion_date',
-                               'extremely_low_income_units', 'very_low_income_units', 
-                               'low_income_units', 'moderate_income_units', 'middle_income_units', 
-                               'other_income_units', 'studio_units', '_1_br_units', '_2_br_units',
-                               '_3_br_units', '_4_br_units', '_5_br_units', '_6_br_units',
-                               'unknown_br_units', 'counted_rental_units', 'counted_homeownership_units',
-                               'total_units', 'all_counted_units', 'project_start_date',
-                               'project_completion_date', 'extended_affordability_status', 'bbl', 'bin']:
-                        if col not in df.columns:
-                            df[col] = raw_data.apply(lambda x: x.get(col))
+                    for key in all_keys:
+                        if key not in df.columns:
+                            df[key] = raw_data.apply(lambda x: x.get(key) if isinstance(x, dict) else None)
+                    
+                    # Also extract specific fields we need (with multiple possible field name variations)
+                    field_mappings = {
+                        'project_id': ['project_id', 'projectid', 'id'],
+                        'building_id': ['building_id', 'buildingid', 'building'],
+                        'building_completion_date': ['building_completion_date', 'buildingcompletiondate', 'building_completion'],
+                        'extended_affordability_status': ['extended_affordability_status', 'extendedaffordabilitystatus', 'extended_affordability'],
+                    }
+                    
+                    for target_field, possible_names in field_mappings.items():
+                        if target_field not in df.columns:
+                            for name in possible_names:
+                                if name in all_keys:
+                                    df[target_field] = raw_data.apply(lambda x: x.get(name) if isinstance(x, dict) else None)
+                                    break
                 
                 # Ensure required fields exist with defaults (handle missing columns)
                 for col in ['project_id', 'borough', 'postcode', 'building_completion_date']:

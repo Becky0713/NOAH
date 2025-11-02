@@ -91,7 +91,7 @@ async def list_records(
         default="house_number,street_name,latitude,longitude,borough,total_units,all_counted_units,project_start_date,project_completion_date,studio_units,project_name,postcode",
         description="Comma-separated field names that will be merged with core fields",
     ),
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=100, ge=1, le=10000),
     offset: int = Query(default=0, ge=0),
     borough: str = Query(default="", description="Filter by borough (empty string means no filter)"),
     min_units: int = Query(default=0, ge=0, description="Minimum unit count"),
