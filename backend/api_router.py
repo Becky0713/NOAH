@@ -88,7 +88,7 @@ async def list_fields(client=Depends(get_client)) -> List[FieldMetadata]:
 @router.get("/v1/records", tags=["housing"])
 async def list_records(
     fields: str = Query(
-        default="house_number,street_name,latitude,longitude,borough,total_units,all_counted_units,project_start_date,project_completion_date,studio_units,project_name,postcode",
+        default="project_id,house_number,street_name,latitude,longitude,borough,total_units,all_counted_units,project_start_date,project_completion_date,studio_units,project_name,postcode",
         description="Comma-separated field names that will be merged with core fields",
     ),
     limit: int = Query(default=100, ge=1, le=10000),
@@ -136,9 +136,19 @@ async def list_records(
             hn = str(row.get("house_number", "")).strip()
             sn = str(row.get("street_name", "")).strip()
             address = (hn + " " + sn).strip() if hn or sn else None
+        # Extract project_id - try multiple possible field names from Socrata API
+        project_id = (
+            row.get("project_id") or 
+            row.get("projectid") or 
+            row.get("id") or 
+            row.get("project__id") or
+            row.get("projectid_number") or
+            None
+        )
+        
         result.append(
             {
-                "project_id": row.get("project_id"),
+                "project_id": project_id,
                 "address": address,
                 "latitude": _safe_float(row.get("latitude")),
                 "longitude": _safe_float(row.get("longitude")),

@@ -232,19 +232,15 @@ def render_map(data: pd.DataFrame):
     center_lat = df_geo["latitude"].mean()
     center_lon = df_geo["longitude"].mean()
     
-    # Calculate affordability ratio for color coding
-    df_geo["affordability_ratio"] = df_geo.apply(
-        lambda row: (row.get("affordable_units", 0) / row.get("total_units", 1)) if row.get("total_units", 0) > 0 else 0, 
+    # Adjust point size based on affordable units (more affordable units = larger circle)
+    # Use affordable_units if available, otherwise fall back to total_units
+    df_geo["radius"] = df_geo.apply(
+        lambda row: max(20, min(200, (row.get("affordable_units", row.get("total_units", 0)) or 0) * 1.5)),
         axis=1
     )
     
-    # Adjust point size based on total units
-    df_geo["radius"] = df_geo["total_units"].fillna(1).apply(lambda x: max(20, min(200, x * 1.5)))
-    
-    # Color based on affordability ratio (green = high affordability, red = low affordability)
-    df_geo["color"] = df_geo["affordability_ratio"].apply(
-        lambda x: [0, 255, 0, 140] if x > 0.7 else [255, 255, 0, 140] if x > 0.3 else [255, 0, 0, 140]
-    )
+    # Use single color for all points (blue)
+    df_geo["color"] = [0, 100, 200, 140]  # Blue color for all points
     
     # Create PyDeck layer
     layer = pdk.Layer(
@@ -561,13 +557,19 @@ def main():
                             df[key] = raw_data.apply(lambda x: x.get(key) if isinstance(x, dict) else None)
                     
                     # Now check if key fields exist and fill from _raw if needed
-                    # project_id might be in the result already, but also check _raw
-                    if 'project_id' not in df.columns or df['project_id'].isna().all():
-                        # Try different possible field names for project_id
-                        for name in ['project_id', 'projectid', 'id']:
-                            if name in all_keys:
-                                df['project_id'] = raw_data.apply(lambda x: x.get(name) if isinstance(x, dict) else None)
-                                break
+                    # project_id is a critical field - try multiple possible field names
+                    project_id_found = False
+                    for name in ['project_id', 'projectid', 'id', 'project__id', 'projectid_number']:
+                        if name in all_keys:
+                            df['project_id'] = raw_data.apply(lambda x: x.get(name) if isinstance(x, dict) else None)
+                            project_id_found = True
+                            break
+                    
+                    # If project_id is still missing, check if it's already in the result from backend
+                    if 'project_id' not in df.columns and not project_id_found:
+                        # Backend API might have already added it
+                        if 'project_id' not in df.columns:
+                            df['project_id'] = ''
                     
                     # Do the same for other critical fields
                     field_mappings = {
