@@ -308,18 +308,17 @@ def render_map(data: pd.DataFrame):
     if 'median_household_income' in df_geo.columns and df_geo['median_household_income'].notna().any():
         median_income_tooltip = "<br/>Median Household Income: ${median_household_income:,.0f}"
     
-    tooltip_html = f"""
-        <b>{{{{project_name}}}}</b><br/>
-        Address: {{{{house_number}}}} {{{{street_name}}}}<br/>
-        Borough: {{{{region}}}}<br/>
-        Total Units: {{{{total_units}}}}<br/>
-        Affordable Units: {{{{affordable_units}}}}<br/>
-        Affordability: {{{{affordability_ratio:.1%}}}}<br/>
-        Studio: {{{{studio_units}}}} | 1BR: {{{{_1_br_units}}}} | 2BR: {{{{_2_br_units}}}} | 3BR: {{{{_3_br_units}}}}{median_income_tooltip}
-        """
-    
+    # PyDeck uses double curly braces for variables
     tooltip = {
-        "html": tooltip_html,
+        "html": """
+        <b>{project_name}</b><br/>
+        Address: {house_number} {street_name}<br/>
+        Borough: {region}<br/>
+        Total Units: {total_units}<br/>
+        Affordable Units: {affordable_units}<br/>
+        Affordability: {affordability_ratio:.1%}<br/>
+        Studio: {studio_units} | 1BR: {_1_br_units} | 2BR: {_2_br_units} | 3BR: {_3_br_units}""" + median_income_tooltip + """
+        """,
         "style": {"backgroundColor": "#262730", "color": "white"},
     }
     
