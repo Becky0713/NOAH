@@ -179,7 +179,7 @@ def render_filter_panel():
         if show_all:
             sample_size = 10000  # Large number to fetch all (backend will handle pagination if needed)
         else:
-            sample_size = st.slider("Sample Size", min_value=10, max_value=5000, value=500, step=50)
+            sample_size = st.slider("Sample Size", min_value=10, max_value=5000, value=100, step=50)
         
         # Borough filter
         st.markdown("#### 📍 Location Filter")
@@ -589,15 +589,25 @@ def main():
                 # Ensure required fields exist with defaults (handle missing columns)
                 # Priority: use extracted field, then region, then empty
                 if 'borough' not in df.columns:
-                    df['borough'] = df.get('region', '')
+                    # Use 'region' column if it exists, otherwise fill with empty string
+                    if 'region' in df.columns:
+                        df['borough'] = df['region'].fillna('')
+                    else:
+                        df['borough'] = ''
                 elif df['borough'].isna().all():
-                    df['borough'] = df.get('region', '')
+                    # If borough is all NaN, try to fill from region column
+                    if 'region' in df.columns:
+                        df['borough'] = df['region'].fillna('')
+                    else:
+                        df['borough'] = ''
                 
                 for col in ['project_id', 'postcode', 'building_completion_date']:
                     if col not in df.columns:
-                        df[col] = ''
-                    # Fill NaN values
-                    df[col] = df[col].fillna('')
+                        # Create a new column with the same length as the DataFrame
+                        df[col] = pd.Series([''] * len(df), dtype=str, index=df.index)
+                    else:
+                        # Fill NaN values
+                        df[col] = df[col].fillna('')
                 
                 # Set defaults for numeric fields and ensure they're numeric
                 numeric_fields = ['extremely_low_income_units', 'very_low_income_units', 'low_income_units',
@@ -608,7 +618,8 @@ def main():
                                  'total_units', 'all_counted_units']
                 for col in numeric_fields:
                     if col not in df.columns:
-                        df[col] = 0
+                        # Create a new column with the same length as the DataFrame
+                        df[col] = pd.Series([0] * len(df), dtype=int, index=df.index)
                     else:
                         # Convert to numeric, handling strings and NaN
                         df[col] = pd.to_numeric(df[col], errors='coerce')
