@@ -1,15 +1,12 @@
 """
 Rent Burden Visualization Page
-Displays rent burden rate choropleth map
+Displays rent burden rates by NYC boroughs in bar chart
 """
 
 import streamlit as st
 import pandas as pd
-import json
-import os
-from pathlib import Path
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from pathlib import Path
 
 # Set page config for this page
 st.set_page_config(
@@ -20,12 +17,8 @@ st.set_page_config(
 
 def get_db_connection():
     """Get database connection from Streamlit secrets"""
-    # Debug: Show available secrets
-    st.write("🔍 Debug - Available secrets:", list(st.secrets.keys()))
-    
-    # Read from Streamlit secrets (lowercase keys)
+    # Streamlit secrets with nested structure
     try:
-        # Streamlit secrets with nested structure
         return psycopg2.connect(
             host=st.secrets["secrets"]["db_host"],
             port=int(st.secrets["secrets"]["db_port"]),
@@ -62,17 +55,69 @@ def fetch_rent_burden_data():
         st.error(f"❌ Database connection error: {e}")
         return pd.DataFrame()
 
-def load_geojson(geojson_path):
-    """Load GeoJSON file"""
-    try:
-        with open(geojson_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        st.error(f"❌ GeoJSON file not found: {geojson_path}")
+def extract_borough_from_geo_id(geo_id):
+    """Extract borough name from GEOID"""
+    # GEOID format: 0600000US3600508510
+    # County codes:
+    # 005 = Bronx County
+    # 047 = Kings County (Brooklyn)
+    # 061 = New York County (Manhattan)
+    # 081 = Queens County
+    # 085 = Richmond County (Staten Island)
+    
+    if not geo_id or len(str(geo_id)) < 15:
         return None
-    except json.JSONDecodeError:
-        st.error("❌ Invalid JSON format in GeoJSON file")
-        return None
+    
+    geo_id_str = str(geo_id)
+    # Extract county code (positions 9-11)
+    county_code = geo_id_str[9:12] if len(geo_id_str) > 11 else None
+    
+    borough_map = {
+        "005": "Bronx",
+        "047": "Brooklyn",
+        "061": "Manhattan",
+        "081": "Queens",
+        "085": "Staten Island"
+    }
+    
+    return borough_map.get(county_code)
+
+def aggregate_by_borough(df):
+    """Aggregate rent burden data by borough"""
+    # Extract borough from geo_id
+    def get_borough(geo_id):
+        if not geo_id or len(str(geo_id)) < 15:
+            return None
+        geo_id_str = str(geo_id)
+        county_code = geo_id_str[9:12] if len(geo_id_str) > 11 else None
+        
+        borough_map = {
+            "005": "Bronx",
+            "047": "Brooklyn",
+            "061": "Manhattan",
+            "081": "Queens",
+            "085": "Staten Island"
+        }
+        return borough_map.get(county_code)
+    
+    # Add borough column
+    df['borough'] = df['geo_id'].apply(get_borough)
+    
+    # Filter out None boroughs
+    df = df[df['borough'].notna()]
+    
+    # Aggregate by borough
+    borough_stats = df.groupby('borough').agg({
+        'rent_burden_rate': 'mean',
+        'severe_burden_rate': 'mean'
+    }).reset_index()
+    
+    # Sort by borough name
+    borough_order = ["Bronx", "Brooklyn", "Manhattan", "Queens", "Staten Island"]
+    borough_stats['borough'] = pd.Categorical(borough_stats['borough'], categories=borough_order, ordered=True)
+    borough_stats = borough_stats.sort_values('borough')
+    
+    return borough_stats
 
 def render_rent_burden_page():
     """Render the main rent burden visualization page"""
@@ -80,7 +125,7 @@ def render_rent_burden_page():
     # Page header
     st.title("🗽 NYC Rent Burden Dashboard")
     st.markdown("""
-    Visualize rent burden rates across NYC census tracts. **Darker colors** indicate 
+    Visualize rent burden rates across NYC boroughs. **Darker colors** indicate 
     higher rent burden (less affordable housing), while **lighter colors** indicate 
     more affordable housing.
     """)
@@ -96,7 +141,7 @@ def render_rent_burden_page():
         try:
             df = fetch_rent_burden_data()
         except Exception as e:
-            st.error(f"❌ Database connection error: {e}")
+            st.error(f"❌ Error loading data: {e}")
             df = pd.DataFrame()
     
     if df.empty:
@@ -105,188 +150,115 @@ def render_rent_burden_page():
         st.text("1. Ensure rent_burden table exists in your database")
         st.text("2. Set DB_* environment variables in Streamlit Secrets")
         st.text("3. Verify database connection is working")
-        
-        with st.expander("📋 Show Database Connection Help"):
-            st.markdown("""
-            **Required Database Setup:**
-            
-            1. **Create the `rent_burden` table:**
-               ```sql
-               CREATE TABLE rent_burden (
-                   geo_id TEXT PRIMARY KEY,
-                   tract_name TEXT,
-                   rent_burden_rate DECIMAL,
-                   severe_burden_rate DECIMAL
-               );
-               ```
-            
-            2. **Set Streamlit Secrets:**
-               ```toml
-               [secrets]
-               DB_HOST = "your-postgres-host"
-               DB_NAME = "noah_dashboard"
-               DB_USER = "your-username"
-               DB_PASSWORD = "your-password"
-               ```
-            """)
-        
-        # Try to show raw connection test
-        with st.expander("🔧 Test Database Connection"):
-            if st.button("Test Connection"):
-                try:
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT version();")
-                    version = cursor.fetchone()
-                    st.success(f"✅ Connected! PostgreSQL version: {version[0]}")
-                    cursor.close()
-                    conn.close()
-                except Exception as e:
-                    st.error(f"❌ Connection failed: {e}")
-        
+        st.stop()
+    
+    # Aggregate by borough
+    borough_stats = aggregate_by_borough(df)
+    
+    if borough_stats.empty:
+        st.warning("⚠️ Could not extract borough information from geo_id.")
+        st.info("Please ensure geo_id follows format: 0600000US3600508510")
+        st.dataframe(df.head(10))
         st.stop()
     
     # Display summary statistics
-    st.subheader("📊 Summary Statistics")
-    col1, col2, col3, col4 = st.columns(4)
+    st.subheader("📊 Summary Statistics by Borough")
     
-    with col1:
-        st.metric(
-            "Total Tracts",
-            f"{len(df):,}",
-            help="Number of census tracts with data"
-        )
+    # Create metrics
+    col1, col2, col3, col4, col5 = st.columns(5)
+    metrics_data = []
+    for idx, row in borough_stats.iterrows():
+        metrics_data.append({
+            'borough': row['borough'],
+            'rent_burden': row['rent_burden_rate'],
+            'severe_burden': row['severe_burden_rate']
+        })
     
-    with col2:
-        st.metric(
-            "Avg Rent Burden",
-            f"{df['rent_burden_rate'].mean():.1%}",
-            help="Average rent burden rate"
-        )
-    
-    with col3:
-        st.metric(
-            "Max Rent Burden",
-            f"{df['rent_burden_rate'].max():.1%}",
-            help="Highest rent burden rate"
-        )
-    
-    with col4:
-        st.metric(
-            "Severe Burden Avg",
-            f"{df['severe_burden_rate'].mean():.1%}",
-            help="Average severe burden rate"
-        )
+    for i, col in enumerate([col1, col2, col3, col4, col5]):
+        with col:
+            if i < len(metrics_data):
+                data = metrics_data[i]
+                st.metric(
+                    data['borough'],
+                    f"{data['rent_burden']:.1%}",
+                    delta=f"Severe: {data['severe_burden']:.1%}",
+                    delta_color="inverse"
+                )
     
     st.divider()
     
-    # Show data first
-    st.subheader("📊 Rent Burden Data")
-    st.dataframe(df, use_container_width=True, height=400)
+    # Create bar chart
+    st.subheader("📊 Rent Burden Rate by Borough")
     
-    # Download button
-    csv = df.to_csv(index=False)
-    st.download_button(
-        "📥 Download Data as CSV",
-        csv,
-        "rent_burden_data.csv",
-        "text/csv"
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    
+    # Create grouped bar chart
+    fig = go.Figure()
+    
+    # Add rent burden rate bars
+    fig.add_trace(go.Bar(
+        name='Rent Burden Rate',
+        x=borough_stats['borough'],
+        y=borough_stats['rent_burden_rate'],
+        marker_color='#ef4444',  # Red
+        text=[f"{x:.1%}" for x in borough_stats['rent_burden_rate']],
+        textposition='outside',
+    ))
+    
+    # Add severe burden rate bars
+    fig.add_trace(go.Bar(
+        name='Severe Burden Rate',
+        x=borough_stats['borough'],
+        y=borough_stats['severe_burden_rate'],
+        marker_color='#dc2626',  # Darker red
+        text=[f"{x:.1%}" for x in borough_stats['severe_burden_rate']],
+        textposition='outside',
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        barmode='group',
+        xaxis_title="Borough",
+        yaxis_title="Rate (%)",
+        yaxis=dict(
+            tickformat='.0%',
+            range=[0, max(borough_stats[['rent_burden_rate', 'severe_burden_rate']].max()) * 1.2]
+        ),
+        height=500,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        title="Rent Burden and Severe Burden Rates by Borough",
+        hovermode='x unified'
     )
     
-    st.divider()
+    st.plotly_chart(fig, use_container_width=True)
     
-    # GeoJSON loading section (optional for map visualization)
-    geojson_path = Path(__file__).parent.parent / "data" / "nyc_tracts.geojson"
-    geojson_data = None
+    # Data table
+    st.subheader("📋 Detailed Statistics")
     
-    if geojson_path.exists():
-        with st.spinner("Loading census tract boundaries..."):
-            geojson_data = load_geojson(geojson_path)
-    else:
-        st.info("💡 **Tip:** Add `nyc_tracts.geojson` to enable choropleth map visualization")
+    # Format for display
+    display_df = borough_stats.copy()
+    display_df['Rent Burden Rate'] = display_df['rent_burden_rate'].apply(lambda x: f"{x:.2%}")
+    display_df['Severe Burden Rate'] = display_df['severe_burden_rate'].apply(lambda x: f"{x:.2%}")
+    display_df = display_df[['borough', 'Rent Burden Rate', 'Severe Burden Rate']]
+    display_df.columns = ['Borough', 'Rent Burden Rate', 'Severe Burden Rate']
     
-    # Visualization section
-    if geojson_data and not df.empty:
-        st.subheader("🗺️ Rent Burden Choropleth Map")
-        
-        # Debug GeoJSON structure
-        if geojson_data and len(geojson_data.get('features', [])) > 0:
-            first_feature = geojson_data['features'][0]
-            st.write("🔍 Debug - GeoJSON properties:", list(first_feature.get('properties', {}).keys()))
-            st.write("🔍 Debug - Sample data geo_ids:", df['geo_id'].head().tolist())
-        
-        try:
-            import plotly.express as px
-            
-            # Try different possible GEOID field names
-            possible_geoid_fields = [
-                "properties.GEOID", 
-                "properties.geoid", 
-                "properties.TRACTCE", 
-                "properties.tractce",
-                "properties.CT2010",
-                "properties.ct2010"
-            ]
-            
-            # Find the correct field
-            geoid_field = "properties.GEOID"  # default
-            if geojson_data and len(geojson_data.get('features', [])) > 0:
-                props = geojson_data['features'][0].get('properties', {})
-                for field in possible_geoid_fields:
-                    field_name = field.replace("properties.", "")
-                    if field_name in props:
-                        geoid_field = field
-                        st.write(f"✅ Using GeoJSON field: {field}")
-                        break
-            
-            # Create choropleth map
-            fig = px.choropleth_mapbox(
-                df,
-                geojson=geojson_data,
-                featureidkey=geoid_field,
-                locations="geo_id",
-                color="rent_burden_rate",
-                color_continuous_scale="Reds",
-                range_color=(0, 1),
-                mapbox_style="carto-positron",
-                zoom=9,
-                center={"lat": 40.7128, "lon": -74.0060},
-                opacity=0.7,
-                hover_name="tract_name",
-                hover_data={
-                    "rent_burden_rate": ":.2%",
-                    "severe_burden_rate": ":.2%",
-                    "geo_id": True
-                },
-                labels={
-                    "rent_burden_rate": "Rent Burden Rate",
-                    "severe_burden_rate": "Severe Burden Rate"
-                },
-                title="Rent Burden Rate by Census Tract<br><sub>Darker = Less Affordable Housing</sub>"
-            )
-            
-            # Update layout
-            fig.update_layout(
-                height=700,
-                margin={"r": 0, "t": 50, "l": 0, "b": 0}
-            )
-            
-            # Display the map
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Add Mapbox token notice
-            st.info("💡 To use satellite imagery or other Mapbox styles, add your Mapbox token to Streamlit secrets as `MAPBOX_TOKEN`")
-            
-        except ImportError:
-            st.error("❌ Plotly not installed. Please install: `pip install plotly`")
-    elif not df.empty:
-        # Fallback: Show data table if no map
-        st.subheader("📋 Rent Burden Data")
-        st.dataframe(df, use_container_width=True, height=400)
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
     
-    # Data table section
-    with st.expander("📋 View Raw Data"):
-        st.dataframe(df, use_container_width=True)
+    # Download button
+    csv = borough_stats.to_csv(index=False)
+    st.download_button(
+        "📥 Download Borough Statistics as CSV",
+        csv,
+        "rent_burden_by_borough.csv",
+        "text/csv"
+    )
 
 def main():
     """Main function"""
