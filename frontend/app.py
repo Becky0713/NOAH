@@ -681,6 +681,20 @@ def main():
                 
                 st.write(f"📍 Showing {len(df)} projects")
                 
+                # Debug: Show available fields if requested
+                if st.checkbox("🔍 Show Debug Info", value=False):
+                    with st.expander("📋 Debug Information"):
+                        st.write("**Available columns:**", list(df.columns))
+                        st.write("**Sample raw data (first row):**")
+                        if '_raw' in df.columns and len(df) > 0:
+                            sample_raw = df['_raw'].iloc[0]
+                            if isinstance(sample_raw, dict):
+                                st.json(sample_raw)
+                            else:
+                                st.write(sample_raw)
+                        st.write("**Data sample (first row):**")
+                        st.dataframe(df.head(1))
+                
                 # Render map
                 render_map(df)
             else:
