@@ -259,22 +259,34 @@ def render_map(data: pd.DataFrame):
     )
     
     # Ensure all tooltip fields exist with defaults
-    df_geo['project_id'] = df_geo.get('project_id', '')
-    df_geo['borough'] = df_geo.get('borough', df_geo.get('region', ''))
-    df_geo['postcode'] = df_geo.get('postcode', '')
-    df_geo['building_completion_date'] = df_geo.get('building_completion_date', '')
-    df_geo['extremely_low_income_units'] = df_geo.get('extremely_low_income_units', 0)
-    df_geo['very_low_income_units'] = df_geo.get('very_low_income_units', 0)
-    df_geo['low_income_units'] = df_geo.get('low_income_units', 0)
-    df_geo['studio_units'] = df_geo.get('studio_units', 0)
-    df_geo['_1_br_units'] = df_geo.get('_1_br_units', 0)
-    df_geo['_2_br_units'] = df_geo.get('_2_br_units', 0)
-    df_geo['counted_rental_units'] = df_geo.get('counted_rental_units', 0)
+    # Handle both column access methods
+    if 'project_id' not in df_geo.columns:
+        df_geo['project_id'] = ''
+    df_geo['project_id'] = df_geo['project_id'].fillna('').astype(str)
+    
+    if 'borough' not in df_geo.columns:
+        df_geo['borough'] = df_geo.get('region', '')
+    df_geo['borough'] = df_geo['borough'].fillna(df_geo.get('region', '')).fillna('')
+    
+    if 'postcode' not in df_geo.columns:
+        df_geo['postcode'] = ''
+    df_geo['postcode'] = df_geo['postcode'].fillna('').astype(str)
+    
+    if 'building_completion_date' not in df_geo.columns:
+        df_geo['building_completion_date'] = ''
     
     # Format building completion date (show "In Progress" if empty)
-    df_geo['building_completion_display'] = df_geo['building_completion_date'].apply(
-        lambda x: "In Progress" if pd.isna(x) or not x or str(x).strip() == '' else str(x)
+    df_geo['building_completion_display'] = df_geo['building_completion_date'].fillna('').apply(
+        lambda x: "In Progress" if not x or str(x).strip() == '' else str(x)
     )
+    
+    # Ensure numeric fields exist
+    for field in ['extremely_low_income_units', 'very_low_income_units', 'low_income_units',
+                  'studio_units', '_1_br_units', '_2_br_units', 'counted_rental_units']:
+        if field not in df_geo.columns:
+            df_geo[field] = 0
+        else:
+            df_geo[field] = pd.to_numeric(df_geo[field], errors='coerce').fillna(0).astype(int)
     
     # PyDeck uses {field_name} for variables in tooltip
     tooltip = {
