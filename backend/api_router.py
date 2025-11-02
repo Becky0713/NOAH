@@ -112,18 +112,26 @@ async def list_records(
 
     if not hasattr(client, "fetch_records"):
         raise HTTPException(status_code=400, detail="Records not supported for current provider")
-    data = await client.fetch_records(
-        selected, 
-        limit=limit, 
-        offset=offset, 
-        borough=borough,
-        min_units=min_units,
-        max_units=max_units,
-        start_date_from=start_date_from,
-        start_date_to=start_date_to
-    )
+    
+    try:
+        data = await client.fetch_records(
+            selected, 
+            limit=limit, 
+            offset=offset, 
+            borough=borough,
+            min_units=min_units,
+            max_units=max_units,
+            start_date_from=start_date_from,
+            start_date_to=start_date_to
+        )
+    except Exception as e:
+        # If client.fetch_records raises an exception, return empty list instead of 502
+        # This prevents backend crashes from upstream API errors
+        data = []
+    
+    # Ensure data is always a list (client should handle errors, but be defensive)
     if not isinstance(data, list):
-        raise HTTPException(status_code=502, detail="Upstream provider error or rate limit; ensure SOCRATA_APP_TOKEN is set.")
+        data = []
 
     # Expose core subset under normalized keys for the frontend
     result: List[dict] = []
