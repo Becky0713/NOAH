@@ -55,6 +55,214 @@ def fetch_rent_burden_data():
         st.error(f"❌ Database connection error: {e}")
         return pd.DataFrame()
 
+def get_variable_mapping():
+    """Get mapping from variable codes to income_bracket and rent_bracket"""
+    # Based on B25074 variable structure
+    mapping = {}
+    
+    # Income brackets and their variable ranges
+    income_ranges = [
+        ("Less than $10,000", (2, 8)),
+        ("$10,000 to $19,999", (9, 15)),
+        ("$20,000 to $34,999", (16, 22)),
+        ("$35,000 to $49,999", (23, 29)),
+        ("$50,000 to $74,999", (30, 36)),
+        ("$75,000 to $99,999", (37, 43)),
+        ("$100,000 to $149,999", (44, 50)),
+        ("$150,000 or more", (51, 57))
+    ]
+    
+    # Rent brackets mapping
+    rent_brackets = [
+        "Less than 20.0 percent",
+        "20.0 to 24.9 percent",
+        "25.0 to 29.9 percent",
+        "30.0 to 34.9 percent",
+        "35.0 to 39.9 percent",
+        "40.0 to 49.9 percent",
+        "50.0 percent or more"
+    ]
+    
+    # Build mapping
+    var_num = 2  # Start from B25074_002E (skip 001 which is Total)
+    for income_bracket, (start, end) in income_ranges:
+        for rent_idx, rent_bracket in enumerate(rent_brackets):
+            if var_num <= 57:  # Max variable number based on typical B25074 structure
+                variable = f"B25074_{var_num:03d}E"
+                mapping[variable] = {
+                    'income_bracket': income_bracket,
+                    'rent_bracket': rent_bracket,
+                    'rent_bracket_short': f"Rent {rent_brackets[rent_idx][:10]}"
+                }
+                var_num += 1
+    
+    return mapping
+
+def fetch_rent_income_distribution():
+    """Fetch rent income distribution data from PostgreSQL"""
+    try:
+        conn = get_db_connection()
+        query = """
+        SELECT 
+            geo_id,
+            tract_name,
+            variable,
+            household_count
+        FROM rent_income_distribution
+        WHERE household_count IS NOT NULL;
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except Exception as e:
+        # Table might not exist yet, return empty dataframe
+        return pd.DataFrame()
+
+def render_income_rent_distribution():
+    """Render stacked bar chart showing income bracket vs rent burden"""
+    st.subheader("📊 Income-Rent Burden Distribution")
+    
+    with st.spinner("Loading income-rent distribution data..."):
+        df = fetch_rent_income_distribution()
+    
+    if df.empty:
+        st.info("💡 Income-rent distribution data is not available. Please ensure `rent_income_distribution` table exists in your database.")
+        return
+    
+    # Get variable mapping
+    var_mapping = get_variable_mapping()
+    
+    # Extract borough from tract_name
+    def get_borough_from_tract_name(tract_name):
+        if not tract_name:
+            return None
+        tract_str = str(tract_name)
+        if " borough" in tract_str:
+            return tract_str.split(" borough")[0].strip()
+        return None
+    
+    df['borough'] = df['tract_name'].apply(get_borough_from_tract_name)
+    df = df[df['borough'].notna()]
+    
+    # Add income_bracket and rent_bracket from mapping
+    df['income_bracket'] = df['variable'].map(lambda x: var_mapping.get(x, {}).get('income_bracket'))
+    df['rent_bracket'] = df['variable'].map(lambda x: var_mapping.get(x, {}).get('rent_bracket'))
+    
+    # Filter out unmapped variables
+    df = df[df['income_bracket'].notna() & df['rent_bracket'].notna()]
+    
+    if df.empty:
+        st.warning("⚠️ Could not map variables to income/rent brackets. Please check variable codes.")
+        return
+    
+    # Borough selector
+    boroughs = sorted(df['borough'].unique())
+    selected_borough = st.selectbox(
+        "Select Borough:",
+        options=["All"] + list(boroughs),
+        index=0
+    )
+    
+    # Filter by borough
+    if selected_borough != "All":
+        df_filtered = df[df['borough'] == selected_borough].copy()
+    else:
+        df_filtered = df.copy()
+    
+    # Aggregate by income_bracket and rent_bracket
+    aggregated = df_filtered.groupby(['income_bracket', 'rent_bracket'])['household_count'].sum().reset_index()
+    
+    # Pivot for stacked bar chart
+    pivot_df = aggregated.pivot(index='income_bracket', columns='rent_bracket', values='household_count').fillna(0)
+    
+    # Order income brackets
+    income_order = [
+        "Less than $10,000",
+        "$10,000 to $19,999",
+        "$20,000 to $34,999",
+        "$35,000 to $49,999",
+        "$50,000 to $74,999",
+        "$75,000 to $99,999",
+        "$100,000 to $149,999",
+        "$150,000 or more"
+    ]
+    
+    # Filter to only include existing brackets
+    income_order = [inc for inc in income_order if inc in pivot_df.index]
+    pivot_df = pivot_df.loc[income_order]
+    
+    # Order rent brackets (from low to high burden)
+    rent_order = [
+        "Less than 20.0 percent",
+        "20.0 to 24.9 percent",
+        "25.0 to 29.9 percent",
+        "30.0 to 34.9 percent",
+        "35.0 to 39.9 percent",
+        "40.0 to 49.9 percent",
+        "50.0 percent or more"
+    ]
+    
+    # Only include columns that exist
+    rent_order = [rent for rent in rent_order if rent in pivot_df.columns]
+    pivot_df = pivot_df[rent_order]
+    
+    # Create stacked bar chart
+    import plotly.graph_objects as go
+    
+    fig = go.Figure()
+    
+    # Color map for rent brackets
+    colors = {
+        "Less than 20.0 percent": "#10b981",      # Green (low burden)
+        "20.0 to 24.9 percent": "#84cc16",        # Light green
+        "25.0 to 29.9 percent": "#eab308",        # Yellow
+        "30.0 to 34.9 percent": "#f97316",        # Orange
+        "35.0 to 39.9 percent": "#ef4444",       # Red
+        "40.0 to 49.9 percent": "#dc2626",       # Dark red
+        "50.0 percent or more": "#991b1b"        # Very dark red (severe burden)
+    }
+    
+    # Add traces for each rent bracket
+    for rent_bracket in rent_order:
+        if rent_bracket in pivot_df.columns:
+            fig.add_trace(go.Bar(
+                name=rent_bracket.replace(" percent", "%").replace("0.0", "0"),
+                x=pivot_df.index,
+                y=pivot_df[rent_bracket],
+                marker_color=colors.get(rent_bracket, "#94a3b8"),
+                text=[f"{int(x):,}" if x > 0 else "" for x in pivot_df[rent_bracket]],
+                textposition='inside',
+            ))
+    
+    # Update layout
+    fig.update_layout(
+        barmode='stack',
+        xaxis_title="Income Bracket",
+        yaxis_title="Household Count",
+        height=600,
+        legend=dict(
+            title="Rent Burden (% of Income)",
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="right",
+            x=1.02
+        ),
+        title=f"Household Rent Burden by Income Bracket{' - ' + selected_borough if selected_borough != 'All' else ''}",
+        hovermode='x unified'
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Download button
+    csv_download = aggregated.to_csv(index=False)
+    st.download_button(
+        "📥 Download Income-Rent Distribution as CSV",
+        csv_download,
+        "rent_income_distribution.csv",
+        "text/csv"
+    )
+
 def aggregate_by_borough(df):
     """Aggregate rent burden data by borough"""
     # Extract borough from tract_name
@@ -223,6 +431,11 @@ def render_rent_burden_page():
         "rent_burden_by_borough.csv",
         "text/csv"
     )
+    
+    st.divider()
+    
+    # Income-Rent Distribution Visualization
+    render_income_rent_distribution()
 
 def main():
     """Main function"""
