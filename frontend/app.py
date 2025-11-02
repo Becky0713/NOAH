@@ -173,23 +173,8 @@ def render_top_navigation():
 def render_filter_panel():
     """Render left filter panel"""
     with st.container():
-        st.markdown("### 🔍 Filters")
-        
-        # Basic filters
-        st.markdown("#### Base Filters")
-        
-        # Region selection
-        try:
-            regions = fetch_regions()
-            region_options = {r["name"]: r["id"] for r in regions}
-            selected_name = st.selectbox("Region", list(region_options.keys()), index=0)
-            selected_region = region_options[selected_name]
-        except Exception as e:
-            st.error(f"Failed to fetch regions: {e}")
-            selected_region = "manhattan"
-        
-        # Sample size
         # Sample size with option to show all
+        st.markdown("#### 📊 Data Options")
         show_all = st.checkbox("Show All Projects (may take longer)", value=False)
         if show_all:
             sample_size = 10000  # Large number to fetch all (backend will handle pagination if needed)
@@ -197,89 +182,17 @@ def render_filter_panel():
             sample_size = st.slider("Sample Size", min_value=10, max_value=5000, value=500, step=50)
         
         # Borough filter
+        st.markdown("#### 📍 Location Filter")
         borough_options = ["", "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
         selected_borough = st.selectbox("Borough", borough_options, index=0)
         
-        # Unit count range
-        st.markdown("#### Unit Count Range")
-        col1, col2 = st.columns(2)
-        with col1:
-            min_units = st.number_input("Min Units", min_value=0, value=0, step=1)
-        with col2:
-            max_units = st.number_input("Max Units", min_value=0, value=0, step=1, help="0 means no limit")
-        
-        # Date range
-        st.markdown("#### Project Start Date")
-        col3, col4 = st.columns(2)
-        with col3:
-            start_date_from = st.date_input("From", value=None)
-        with col4:
-            start_date_to = st.date_input("To", value=None)
-        
-        # Convert dates to strings
-        start_date_from_str = start_date_from.strftime("%Y-%m-%d") if start_date_from else ""
-        start_date_to_str = start_date_to.strftime("%Y-%m-%d") if start_date_to else ""
-        
-        # Add More Fields section
-        st.markdown("---")
-        st.markdown("#### 📋 Add More Fields")
-        
-        try:
-            meta = fetch_field_metadata()
-            all_fields = [m["field_name"] for m in meta]
-        except Exception as e:
-            st.warning(f"Failed to fetch field metadata: {e}")
-            # Fallback field list
-            all_fields = [
-                "community_board", "census_tract", "postcode", "bbl", "bin",
-                "council_district", "neighborhood_tabulation_area", "project_name",
-                "building_id", "studio_units", "_1_br_units", "_2_br_units", "_3_br_units",
-                "extremely_low_income_units", "very_low_income_units", "low_income_units",
-                "moderate_income_units", "middle_income_units", "other_income_units",
-                "counted_rental_units", "counted_homeownership_units",
-                "reporting_construction_type", "extended_affordability_status", "prevailing_wage_status"
-            ]
-        
-        # Core fields (always included)
-        core_fields = [
-            "project_name", "house_number", "street_name", "total_units", 
-            "all_counted_units", "studio_units", "_1_br_units", "_2_br_units", 
-            "_3_br_units", "project_completion_date"
-        ]
-        
-        # Available additional fields
-        additional_fields = [f for f in all_fields if f not in core_fields]
-        
-        # Field selection
-        selected_additional = st.multiselect(
-            "Select additional fields to display:",
-            additional_fields,
-            default=[],
-            help="Choose fields to add to the Info Card"
-        )
-        
-        # Confirm button
-        if st.button("✅ Confirm Field Selection", type="primary", use_container_width=True):
-            st.session_state.selected_fields = core_fields + selected_additional
-            st.session_state.fields_confirmed = True
-            st.success(f"Added {len(selected_additional)} additional fields!")
-        
-        # Show current selection
-        if 'selected_fields' in st.session_state:
-            st.markdown(f"**Current fields ({len(st.session_state.selected_fields)}):**")
-            for field in st.session_state.selected_fields[:5]:  # Show first 5
-                st.markdown(f"• {field}")
-            if len(st.session_state.selected_fields) > 5:
-                st.markdown(f"• ... and {len(st.session_state.selected_fields) - 5} more")
-        
         return {
-            "region": selected_region,
             "sample_size": sample_size,
             "borough": selected_borough,
-            "min_units": min_units,
-            "max_units": max_units,
-            "start_date_from": start_date_from_str,
-            "start_date_to": start_date_to_str
+            "min_units": 0,
+            "max_units": 0,
+            "start_date_from": "",
+            "start_date_to": ""
         }
 
 def render_map(data: pd.DataFrame):
@@ -590,7 +503,6 @@ def main():
     
     # Collapsible filters in sidebar
     with st.sidebar:
-        st.markdown("### 🔧 Filters")
         filter_params = render_filter_panel()
     
     # Main layout: Map takes 70-75% width, info card takes 20-25%
@@ -631,21 +543,30 @@ def main():
                         if isinstance(raw, dict):
                             all_keys.update(raw.keys())
                     
-                    # Extract all fields from raw data
+                    # Extract all fields from raw data (these are the actual Socrata field names)
                     for key in all_keys:
                         if key not in df.columns:
                             df[key] = raw_data.apply(lambda x: x.get(key) if isinstance(x, dict) else None)
                     
-                    # Also extract specific fields we need (with multiple possible field name variations)
+                    # Now check if key fields exist and fill from _raw if needed
+                    # project_id might be in the result already, but also check _raw
+                    if 'project_id' not in df.columns or df['project_id'].isna().all():
+                        # Try different possible field names for project_id
+                        for name in ['project_id', 'projectid', 'id']:
+                            if name in all_keys:
+                                df['project_id'] = raw_data.apply(lambda x: x.get(name) if isinstance(x, dict) else None)
+                                break
+                    
+                    # Do the same for other critical fields
                     field_mappings = {
-                        'project_id': ['project_id', 'projectid', 'id'],
                         'building_id': ['building_id', 'buildingid', 'building'],
                         'building_completion_date': ['building_completion_date', 'buildingcompletiondate', 'building_completion'],
                         'extended_affordability_status': ['extended_affordability_status', 'extendedaffordabilitystatus', 'extended_affordability'],
+                        'postcode': ['postcode', 'postal_code', 'zip_code', 'zipcode'],
                     }
                     
                     for target_field, possible_names in field_mappings.items():
-                        if target_field not in df.columns:
+                        if target_field not in df.columns or df[target_field].isna().all():
                             for name in possible_names:
                                 if name in all_keys:
                                     df[target_field] = raw_data.apply(lambda x: x.get(name) if isinstance(x, dict) else None)
