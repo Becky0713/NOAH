@@ -240,6 +240,7 @@ def render_income_rent_distribution():
         xaxis_title="Income Bracket",
         yaxis_title="Household Count",
         height=600,
+        margin=dict(r=200),  # Add right margin for legend
         legend=dict(
             title="Rent Burden (% of Income)",
             orientation="v",
