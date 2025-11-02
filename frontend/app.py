@@ -652,12 +652,19 @@ def main():
                                     break
                 
                 # Ensure required fields exist with defaults (handle missing columns)
-                for col in ['project_id', 'borough', 'postcode', 'building_completion_date']:
+                # Priority: use extracted field, then region, then empty
+                if 'borough' not in df.columns:
+                    df['borough'] = df.get('region', '')
+                elif df['borough'].isna().all():
+                    df['borough'] = df.get('region', '')
+                
+                for col in ['project_id', 'postcode', 'building_completion_date']:
                     if col not in df.columns:
                         df[col] = ''
-                df['borough'] = df.get('borough', df.get('region', ''))
+                    # Fill NaN values
+                    df[col] = df[col].fillna('')
                 
-                # Set defaults for numeric fields
+                # Set defaults for numeric fields and ensure they're numeric
                 numeric_fields = ['extremely_low_income_units', 'very_low_income_units', 'low_income_units',
                                  'moderate_income_units', 'middle_income_units', 'other_income_units',
                                  'studio_units', '_1_br_units', '_2_br_units', '_3_br_units',
@@ -668,7 +675,9 @@ def main():
                     if col not in df.columns:
                         df[col] = 0
                     else:
-                        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                        # Convert to numeric, handling strings and NaN
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                        df[col] = df[col].fillna(0).astype(int)
                 
                 st.write(f"📍 Showing {len(df)} projects")
                 
