@@ -84,6 +84,43 @@ def fetch_records(
     resp = _make_request_with_retry(f"{BACKEND_URL}/v1/records", params=params)
     return resp.json()
 
+def fetch_median_income_data():
+    """Fetch median household income data from database"""
+    try:
+        import psycopg2
+        
+        conn = psycopg2.connect(
+            host=st.secrets["secrets"]["db_host"],
+            port=int(st.secrets["secrets"]["db_port"]),
+            dbname=st.secrets["secrets"]["db_name"],
+            user=st.secrets["secrets"]["db_user"],
+            password=st.secrets["secrets"]["db_password"],
+            sslmode="require"
+        )
+        
+        query = """
+        SELECT geo_id, tract_name, median_household_income
+        FROM median_household_income
+        WHERE median_household_income IS NOT NULL
+        AND median_household_income != '<NA>'
+        AND median_household_income != 'Geography'
+        """
+        
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        # Convert income to numeric
+        df['median_household_income'] = pd.to_numeric(
+            df['median_household_income'], 
+            errors='coerce'
+        )
+        df = df[df['median_household_income'].notna()]
+        
+        return df
+    except Exception as e:
+        # Database might not be available or table doesn't exist
+        return pd.DataFrame()
+
 def render_top_navigation():
     """Render top navigation bar"""
     col1, col2 = st.columns([2, 1])
@@ -266,16 +303,20 @@ def render_map(data: pd.DataFrame):
         pickable=True,
     )
     
-    # Create tooltip
+    # Create tooltip with median income if available
+    median_income_tooltip = ""
+    if 'median_household_income' in df_geo.columns and df_geo['median_household_income'].notna().any():
+        median_income_tooltip = "<br/>Median Household Income: ${median_household_income:,.0f}"
+    
     tooltip = {
-        "html": """
-        <b>{project_name}</b><br/>
-        Address: {house_number} {street_name}<br/>
-        Borough: {region}<br/>
-        Total Units: {total_units}<br/>
-        Affordable Units: {affordable_units}<br/>
-        Affordability: {affordability_ratio:.1%}<br/>
-        Studio: {studio_units} | 1BR: {_1_br_units} | 2BR: {_2_br_units} | 3BR: {_3_br_units}
+        "html": f"""
+        <b>{{project_name}}</b><br/>
+        Address: {{house_number}} {{street_name}}<br/>
+        Borough: {{region}}<br/>
+        Total Units: {{total_units}}<br/>
+        Affordable Units: {{affordable_units}}<br/>
+        Affordability: {{affordability_ratio:.1%}}<br/>
+        Studio: {{studio_units}} | 1BR: {{_1_br_units}} | 2BR: {{_2_br_units}} | 3BR: {{_3_br_units}}{median_income_tooltip}
         """,
         "style": {"backgroundColor": "#262730", "color": "white"},
     }
@@ -342,6 +383,8 @@ def render_info_card_section():
         st.write(f"**Address:** {project.get('house_number', '')} {project.get('street_name', '')}")
         st.write(f"**Borough:** {project.get('region', 'N/A')}")
         st.write(f"**Postcode:** {project.get('postcode', 'N/A')}")
+        if project.get('median_household_income'):
+            st.write(f"**Median Household Income:** ${project.get('median_household_income'):,.0f}")
         
         # Units Info Section
         st.markdown("#### 🏠 Units Info")
@@ -427,6 +470,43 @@ def main():
             
             if records:
                 df = pd.DataFrame(records)
+                
+                # Fetch and merge median income data
+                income_df = fetch_median_income_data()
+                if not income_df.empty:
+                    # Try to match by geo_id if available
+                    if 'geo_id' in df.columns:
+                        # Normalize geo_id formats (handle both 1400000US and 0600000US)
+                        income_df_normalized = income_df.copy()
+                        income_df_normalized['geo_id_normalized'] = income_df_normalized['geo_id'].astype(str).str.replace('1400000US', '0600000US')
+                        df['geo_id_normalized'] = df['geo_id'].astype(str).str.replace('1400000US', '0600000US')
+                        
+                        df = df.merge(
+                            income_df_normalized[['geo_id_normalized', 'median_household_income']],
+                            on='geo_id_normalized',
+                            how='left'
+                        )
+                        # Also try direct match with original geo_id
+                        df = df.merge(
+                            income_df[['geo_id', 'median_household_income']],
+                            on='geo_id',
+                            how='left',
+                            suffixes=('', '_direct')
+                        )
+                        # Use direct match if normalized didn't work
+                        df['median_household_income'] = df['median_household_income'].fillna(df.get('median_household_income_direct', pd.Series()))
+                        df = df.drop(columns=['median_household_income_direct'], errors='ignore')
+                    # Try to match by tract_name if geo_id doesn't work
+                    if 'tract_name' in df.columns and ('median_household_income' not in df.columns or df['median_household_income'].isna().all()):
+                        df = df.merge(
+                            income_df[['tract_name', 'median_household_income']],
+                            on='tract_name',
+                            how='left',
+                            suffixes=('', '_from_tract')
+                        )
+                        df['median_household_income'] = df['median_household_income'].fillna(df.get('median_household_income_from_tract', pd.Series()))
+                        df = df.drop(columns=['median_household_income_from_tract'], errors='ignore')
+                
                 st.write(f"📍 Showing {len(df)} projects")
                 
                 # Render map
