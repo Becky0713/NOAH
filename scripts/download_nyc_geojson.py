@@ -4,9 +4,11 @@ Download NYC Census Tracts GeoJSON for rent burden visualization
 
 import os
 import requests
+import json
 from pathlib import Path
 
-GEOJSON_URL = "https://data.cityofnewyork.us/api/geospatial/37yn-as6i?method=export&format=GeoJSON"
+# NYC Census Tracts GeoJSON
+GEOJSON_URL = "https://data.cityofnewyork.us/resource/37yn-as6i.geojson"
 OUTPUT_DIR = Path(__file__).parent.parent / "frontend" / "data"
 OUTPUT_FILE = OUTPUT_DIR / "nyc_tracts.geojson"
 

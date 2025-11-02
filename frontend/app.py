@@ -86,20 +86,12 @@ def fetch_records(
 
 def render_top_navigation():
     """Render top navigation bar"""
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    col1, col2 = st.columns([2, 1])
     
     with col1:
         st.markdown("# 🏠 NYC Housing Hub")
     
     with col2:
-        if st.button("📚 Glossary", use_container_width=True):
-            st.switch_page("pages/glossary.py")
-    
-    with col3:
-        if st.button("ℹ️ About", use_container_width=True):
-            st.switch_page("pages/about.py")
-    
-    with col4:
         if st.button("📋 Info Panel", use_container_width=True):
             st.session_state.show_info_card = not st.session_state.show_info_card
             st.rerun()
