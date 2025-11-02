@@ -170,7 +170,7 @@ def render_rent_burden_page():
         name='Rent Burden Rate',
         x=borough_stats['borough'],
         y=borough_stats['rent_burden_rate'],
-        marker_color='#ef4444',  # Red
+        marker_color='#3b82f6',  # Blue
         text=[f"{x:.1%}" for x in borough_stats['rent_burden_rate']],
         textposition='outside',
     ))
