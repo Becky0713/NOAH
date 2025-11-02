@@ -303,21 +303,39 @@ def render_map(data: pd.DataFrame):
         pickable=True,
     )
     
-    # Create tooltip with median income if available
-    median_income_tooltip = ""
-    if 'median_household_income' in df_geo.columns and df_geo['median_household_income'].notna().any():
-        median_income_tooltip = "<br/>Median Household Income: ${median_household_income:,.0f}"
+    # Ensure all tooltip fields exist with defaults
+    df_geo['project_id'] = df_geo.get('project_id', '')
+    df_geo['borough'] = df_geo.get('borough', df_geo.get('region', ''))
+    df_geo['postcode'] = df_geo.get('postcode', '')
+    df_geo['building_completion_date'] = df_geo.get('building_completion_date', '')
+    df_geo['extremely_low_income_units'] = df_geo.get('extremely_low_income_units', 0)
+    df_geo['very_low_income_units'] = df_geo.get('very_low_income_units', 0)
+    df_geo['low_income_units'] = df_geo.get('low_income_units', 0)
+    df_geo['studio_units'] = df_geo.get('studio_units', 0)
+    df_geo['_1_br_units'] = df_geo.get('_1_br_units', 0)
+    df_geo['_2_br_units'] = df_geo.get('_2_br_units', 0)
+    df_geo['counted_rental_units'] = df_geo.get('counted_rental_units', 0)
     
-    # PyDeck uses double curly braces for variables
+    # Format building completion date (show "In Progress" if empty)
+    df_geo['building_completion_display'] = df_geo['building_completion_date'].apply(
+        lambda x: "In Progress" if pd.isna(x) or not x or str(x).strip() == '' else str(x)
+    )
+    
+    # PyDeck uses {field_name} for variables in tooltip
     tooltip = {
         "html": """
-        <b>{project_name}</b><br/>
-        Address: {house_number} {street_name}<br/>
-        Borough: {region}<br/>
-        Total Units: {total_units}<br/>
-        Affordable Units: {affordable_units}<br/>
-        Affordability: {affordability_ratio:.1%}<br/>
-        Studio: {studio_units} | 1BR: {_1_br_units} | 2BR: {_2_br_units} | 3BR: {_3_br_units}""" + median_income_tooltip + """
+        <b>Project ID: {project_id}</b><br/>
+        Borough: {borough}<br/>
+        Postcode: {postcode}<br/>
+        Building Completion: {building_completion_display}<br/>
+        <br/>
+        <b>Income-Restricted Units:</b><br/>
+        Extremely Low: {extremely_low_income_units} | Very Low: {very_low_income_units} | Low: {low_income_units}<br/>
+        <br/>
+        <b>Bedroom Units:</b><br/>
+        Studio: {studio_units} | 1-BR: {_1_br_units} | 2-BR: {_2_br_units}<br/>
+        <br/>
+        Counted Rental Units: {counted_rental_units}
         """,
         "style": {"backgroundColor": "#262730", "color": "white"},
     }
@@ -340,29 +358,36 @@ def render_map(data: pd.DataFrame):
         use_container_width=True
     )
     
-    # Handle map interactions (simplified for now)
-    # Note: PyDeck doesn't support click events directly in Streamlit
-    # We'll use a simple table selection instead
+    # Project ID search and selection
     if not df_geo.empty:
-        st.markdown("### 📊 Select a Project")
-        # Display project selection table
-        st.dataframe(
-            df_geo[['project_name', 'address', 'total_units', 'affordable_units', 'region']].head(20),
-            use_container_width=True,
-            hide_index=True
-        )
+        st.markdown("### 🔍 Search by Project ID")
         
-        # Add project selection using selectbox
-        if not df_geo.empty:
-            project_options = [f"{row['project_name']} - {row['address']}" for idx, row in df_geo.head(20).iterrows()]
-            selected_option = st.selectbox("Select a project to view details:", ["None"] + project_options)
+        # Get unique project IDs
+        project_ids = sorted(df_geo['project_id'].dropna().unique().tolist())
+        
+        if project_ids:
+            selected_project_id = st.selectbox(
+                "Select Project ID to view details:",
+                options=["None"] + project_ids,
+                index=0
+            )
             
-            if selected_option != "None":
-                selected_idx = project_options.index(selected_option)
-                selected_project = df_geo.iloc[selected_idx].to_dict()
+            if selected_project_id != "None":
+                selected_project = df_geo[df_geo['project_id'] == selected_project_id].iloc[0].to_dict()
                 st.session_state.selected_project = selected_project
                 st.session_state.show_info_card = True
                 st.rerun()
+        
+        # Download CSV button
+        st.markdown("### 📥 Download Data")
+        csv = df_geo.to_csv(index=False)
+        st.download_button(
+            "📥 Download Full Dataset as CSV",
+            csv,
+            "nyc_housing_projects.csv",
+            "text/csv",
+            use_container_width=True
+        )
 
 def render_info_card_section():
     """Render the info card section as a floating panel"""
@@ -375,46 +400,77 @@ def render_info_card_section():
         st.rerun()
     
     if st.session_state.selected_project is not None:
-        # Display selected project details
         project = st.session_state.selected_project
         
-        # Basic Info Section
-        st.markdown("#### 📍 Basic Info")
-        st.write(f"**Project:** {project.get('project_name', 'N/A')}")
-        st.write(f"**Address:** {project.get('house_number', '')} {project.get('street_name', '')}")
-        st.write(f"**Borough:** {project.get('region', 'N/A')}")
-        st.write(f"**Postcode:** {project.get('postcode', 'N/A')}")
-        if project.get('median_household_income'):
-            st.write(f"**Median Household Income:** ${project.get('median_household_income'):,.0f}")
+        # Helper function to format values
+        def get_val(key, default='N/A'):
+            val = project.get(key, default)
+            if val is None or val == '' or (isinstance(val, float) and pd.isna(val)):
+                return default
+            return val
         
-        # Units Info Section
-        st.markdown("#### 🏠 Units Info")
+        # Basic Info Section
+        st.markdown("#### 📍 Basic Information")
+        st.write(f"**Project ID:** {get_val('project_id')}")
+        st.write(f"**Project Name:** {get_val('project_name')}")
+        st.write(f"**Borough:** {get_val('borough', get_val('region'))}")
+        st.write(f"**Postcode:** {get_val('postcode')}")
+        st.write(f"**Building ID:** {get_val('building_id')}")
+        st.write(f"**BBL:** {get_val('bbl')}")
+        st.write(f"**BIN:** {get_val('bin')}")
+        
+        # Project Dates Section
+        st.markdown("#### 📅 Project Dates")
+        st.write(f"**Project Start Date:** {get_val('project_start_date')}")
+        st.write(f"**Project Completion Date:** {get_val('project_completion_date')}")
+        
+        building_date = get_val('building_completion_date', 'In Progress')
+        if building_date == '' or building_date == 'N/A':
+            building_date = 'In Progress'
+        st.write(f"**Building Completion Date:** {building_date}")
+        
+        # Extended Affordability
+        ext_afford = get_val('extended_affordability_status', 'N/A')
+        if ext_afford != 'N/A':
+            st.write(f"**Extended Affordability Only:** {ext_afford}")
+        
+        # Income-Restricted Units Section
+        st.markdown("#### 💰 Income-Restricted Units")
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Total Units", project.get('total_units', 0))
-            st.metric("Affordable Units", project.get('affordable_units', 0))
+            st.metric("Extremely Low", get_val('extremely_low_income_units', 0))
+            st.metric("Very Low", get_val('very_low_income_units', 0))
+            st.metric("Low", get_val('low_income_units', 0))
         with col2:
-            st.metric("Studio", project.get('studio_units', 0))
-            st.metric("1-Bedroom", project.get('_1_br_units', 0))
+            st.metric("Moderate", get_val('moderate_income_units', 0))
+            st.metric("Middle", get_val('middle_income_units', 0))
+            st.metric("Other", get_val('other_income_units', 0))
         
-        # Timeline Section
-        st.markdown("#### 📅 Timeline")
-        st.write(f"**Start Date:** {project.get('project_start_date', 'N/A')}")
-        st.write(f"**Completion Date:** {project.get('project_completion_date', 'N/A')}")
+        # Bedroom Units Section
+        st.markdown("#### 🏠 Bedroom Units")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Studio", get_val('studio_units', 0))
+            st.metric("1-BR", get_val('_1_br_units', 0))
+            st.metric("2-BR", get_val('_2_br_units', 0))
+            st.metric("3-BR", get_val('_3_br_units', 0))
+        with col2:
+            st.metric("4-BR", get_val('_4_br_units', 0))
+            st.metric("5-BR", get_val('_5_br_units', 0))
+            st.metric("6-BR+", get_val('_6_br_units', 0))
+            st.metric("Unknown BR", get_val('unknown_br_units', 0))
         
-        # Additional Info Section (if user confirmed new fields)
-        if st.session_state.get('fields_confirmed', False):
-            st.markdown("#### ℹ️ Additional Info")
-            additional_fields = [f for f in st.session_state.selected_fields 
-                               if f not in ['project_name', 'house_number', 'street_name', 'total_units', 
-                                          'all_counted_units', 'studio_units', '_1_br_units', '_2_br_units', 
-                                          '_3_br_units', 'project_start_date', 'project_completion_date', 'region', 'postcode']]
-            
-            for field in additional_fields:
-                if field in project and project[field] is not None:
-                    st.write(f"**{field.replace('_', ' ').title()}:** {project[field]}")
+        # Unit Counts Section
+        st.markdown("#### 📊 Unit Counts")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Units", get_val('total_units', 0))
+        with col2:
+            st.metric("Counted Rental", get_val('counted_rental_units', 0))
+        with col3:
+            st.metric("Counted Homeownership", get_val('counted_homeownership_units', 0))
     else:
-        st.info("Click on a project marker on the map to view details.")
+        st.info("Select a Project ID above to view details.")
 
 def main():
     """Main application"""
@@ -426,10 +482,18 @@ def main():
     
     # Initialize session state
     if 'selected_fields' not in st.session_state:
+        # Request all needed fields from API
         st.session_state.selected_fields = [
-            "project_name", "house_number", "street_name", "latitude", "longitude", "total_units", 
-            "all_counted_units", "studio_units", "_1_br_units", "_2_br_units", 
-            "_3_br_units", "project_completion_date"
+            "project_id", "project_name", "house_number", "street_name", "latitude", "longitude",
+            "borough", "postcode", "building_id", "building_completion_date",
+            "extremely_low_income_units", "very_low_income_units", "low_income_units",
+            "moderate_income_units", "middle_income_units", "other_income_units",
+            "studio_units", "_1_br_units", "_2_br_units", "_3_br_units",
+            "_4_br_units", "_5_br_units", "_6_br_units", "unknown_br_units",
+            "counted_rental_units", "counted_homeownership_units",
+            "total_units", "all_counted_units",
+            "project_start_date", "project_completion_date",
+            "extended_affordability_status", "bbl", "bin"
         ]
         st.session_state.fields_confirmed = True
     
@@ -472,41 +536,40 @@ def main():
             if records:
                 df = pd.DataFrame(records)
                 
-                # Fetch and merge median income data
-                income_df = fetch_median_income_data()
-                if not income_df.empty:
-                    # Try to match by geo_id if available
-                    if 'geo_id' in df.columns:
-                        # Normalize geo_id formats (handle both 1400000US and 0600000US)
-                        income_df_normalized = income_df.copy()
-                        income_df_normalized['geo_id_normalized'] = income_df_normalized['geo_id'].astype(str).str.replace('1400000US', '0600000US')
-                        df['geo_id_normalized'] = df['geo_id'].astype(str).str.replace('1400000US', '0600000US')
-                        
-                        df = df.merge(
-                            income_df_normalized[['geo_id_normalized', 'median_household_income']],
-                            on='geo_id_normalized',
-                            how='left'
-                        )
-                        # Also try direct match with original geo_id
-                        df = df.merge(
-                            income_df[['geo_id', 'median_household_income']],
-                            on='geo_id',
-                            how='left',
-                            suffixes=('', '_direct')
-                        )
-                        # Use direct match if normalized didn't work
-                        df['median_household_income'] = df['median_household_income'].fillna(df.get('median_household_income_direct', pd.Series()))
-                        df = df.drop(columns=['median_household_income_direct'], errors='ignore')
-                    # Try to match by tract_name if geo_id doesn't work
-                    if 'tract_name' in df.columns and ('median_household_income' not in df.columns or df['median_household_income'].isna().all()):
-                        df = df.merge(
-                            income_df[['tract_name', 'median_household_income']],
-                            on='tract_name',
-                            how='left',
-                            suffixes=('', '_from_tract')
-                        )
-                        df['median_household_income'] = df['median_household_income'].fillna(df.get('median_household_income_from_tract', pd.Series()))
-                        df = df.drop(columns=['median_household_income_from_tract'], errors='ignore')
+                # Extract data from _raw field if available
+                if '_raw' in df.columns:
+                    raw_data = df['_raw'].apply(lambda x: x if isinstance(x, dict) else {})
+                    # Extract all fields from raw data
+                    for col in ['project_id', 'project_name', 'house_number', 'street_name', 
+                               'borough', 'postcode', 'building_id', 'building_completion_date',
+                               'extremely_low_income_units', 'very_low_income_units', 
+                               'low_income_units', 'moderate_income_units', 'middle_income_units', 
+                               'other_income_units', 'studio_units', '_1_br_units', '_2_br_units',
+                               '_3_br_units', '_4_br_units', '_5_br_units', '_6_br_units',
+                               'unknown_br_units', 'counted_rental_units', 'counted_homeownership_units',
+                               'total_units', 'all_counted_units', 'project_start_date',
+                               'project_completion_date', 'extended_affordability_status', 'bbl', 'bin']:
+                        if col not in df.columns:
+                            df[col] = raw_data.apply(lambda x: x.get(col))
+                
+                # Ensure required fields exist with defaults (handle missing columns)
+                for col in ['project_id', 'borough', 'postcode', 'building_completion_date']:
+                    if col not in df.columns:
+                        df[col] = ''
+                df['borough'] = df.get('borough', df.get('region', ''))
+                
+                # Set defaults for numeric fields
+                numeric_fields = ['extremely_low_income_units', 'very_low_income_units', 'low_income_units',
+                                 'moderate_income_units', 'middle_income_units', 'other_income_units',
+                                 'studio_units', '_1_br_units', '_2_br_units', '_3_br_units',
+                                 '_4_br_units', '_5_br_units', '_6_br_units', 'unknown_br_units',
+                                 'counted_rental_units', 'counted_homeownership_units',
+                                 'total_units', 'all_counted_units']
+                for col in numeric_fields:
+                    if col not in df.columns:
+                        df[col] = 0
+                    else:
+                        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 
                 st.write(f"📍 Showing {len(df)} projects")
                 
