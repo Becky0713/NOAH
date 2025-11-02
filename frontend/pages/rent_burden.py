@@ -246,7 +246,7 @@ def render_income_rent_distribution():
             yanchor="top",
             y=1,
             xanchor="left",
-            x=-0.1
+            x=1.05
         ),
         title=f"Household Rent Burden by Income Bracket{' - ' + selected_borough if selected_borough != 'All' else ''}",
         hovermode='x unified'
