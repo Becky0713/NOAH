@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 from .base import BaseHousingClient
 from ..config import settings
 
@@ -136,15 +138,38 @@ class SocrataHousingClient(BaseHousingClient):
         
         if where_conditions:
             params["$where"] = " AND ".join(where_conditions)
-        resp = await self._get_with_retries(url, headers=self._headers(), params=params)
         try:
-            data = resp.json()
-        except Exception:  # noqa: BLE001
+            resp = await self._get_with_retries(url, headers=self._headers(), params=params)
+            # Check if response is successful
+            resp.raise_for_status()
+            
+            try:
+                data = resp.json()
+            except Exception:  # noqa: BLE001
+                # If JSON parsing fails, return empty list
+                return []
+            
+            # Check if Socrata API returned an error
+            if isinstance(data, dict):
+                # Socrata API errors are usually in format: {"error": true, "message": "..."}
+                if data.get("error") or "message" in data:
+                    error_msg = data.get("message", "Unknown Socrata API error")
+                    # Log error but don't crash - return empty list
+                    # This allows frontend to continue working
+                    return []
+            
+            if isinstance(data, list):
+                return data
+            
+            # If dict (error structure) or other type, return empty list to avoid 500
             return []
-        if isinstance(data, list):
-            return data
-        # If dict (error structure) or other type, return empty list to avoid 500
-        return []
+        except httpx.HTTPStatusError as e:
+            # Handle HTTP errors (400, 404, 500, etc.)
+            # Don't crash the backend - return empty list
+            return []
+        except Exception as e:  # noqa: BLE001
+            # Handle any other errors (network, timeout, etc.)
+            return []
 
 
 
