@@ -56,11 +56,101 @@ async def debug_config():
             "socrata_dataset_id": settings.socrata_dataset_id,
             "has_socrata_token": bool(settings.socrata_app_token),
             "token_length": len(settings.socrata_app_token) if settings.socrata_app_token else 0,
+            "token_prefix": settings.socrata_app_token[:10] + "..." if settings.socrata_app_token and len(settings.socrata_app_token) > 10 else "N/A",
             "data_provider": settings.data_provider,
         }
     except Exception as e:
         return {
             "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@router.get("/debug/test-token", tags=["debug"])
+async def test_socrata_token():
+    """Test if Socrata API token is valid by making a test request"""
+    try:
+        from .config import settings
+        import httpx
+        
+        if not settings.socrata_app_token:
+            return {
+                "status": "error",
+                "message": "No Socrata token configured",
+                "has_token": False
+            }
+        
+        # Make a simple test request to Socrata API
+        test_url = f"{settings.socrata_base_url}/resource/{settings.socrata_dataset_id}.json"
+        headers = {"X-App-Token": settings.socrata_app_token}
+        params = {"$limit": 1}  # Just fetch 1 record to test
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                resp = await client.get(test_url, headers=headers, params=params)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        return {
+                            "status": "success",
+                            "message": "Token is valid!",
+                            "has_token": True,
+                            "test_records": len(data),
+                            "token_length": len(settings.socrata_app_token)
+                        }
+                    elif isinstance(data, dict) and data.get("error"):
+                        return {
+                            "status": "error",
+                            "message": f"Socrata API error: {data.get('message', 'Unknown error')}",
+                            "has_token": True,
+                            "token_length": len(settings.socrata_app_token)
+                        }
+                    else:
+                        return {
+                            "status": "warning",
+                            "message": "Unexpected response format",
+                            "has_token": True,
+                            "response_type": type(data).__name__
+                        }
+                elif resp.status_code == 401:
+                    return {
+                        "status": "error",
+                        "message": "Token is invalid or expired (401 Unauthorized)",
+                        "has_token": True,
+                        "token_length": len(settings.socrata_app_token),
+                        "suggestion": "Please check your token at https://data.cityofnewyork.us/profile/app_tokens"
+                    }
+                elif resp.status_code == 403:
+                    return {
+                        "status": "error",
+                        "message": "Token is forbidden (403 Forbidden)",
+                        "has_token": True,
+                        "token_length": len(settings.socrata_app_token)
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Socrata API returned status {resp.status_code}",
+                        "has_token": True,
+                        "token_length": len(settings.socrata_app_token),
+                        "response_text": resp.text[:200]
+                    }
+            except httpx.TimeoutException:
+                return {
+                    "status": "error",
+                    "message": "Request to Socrata API timed out",
+                    "has_token": True
+                }
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "message": f"Error testing token: {str(e)[:200]}",
+                    "has_token": True
+                }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to test token: {str(e)[:200]}",
             "error_type": type(e).__name__
         }
 
