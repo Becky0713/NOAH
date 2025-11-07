@@ -363,25 +363,40 @@ def render_map(data: pd.DataFrame):
     if not df_geo.empty:
         st.markdown("### 🔍 Search by Project ID")
         
-        # Get unique project IDs for suggestions
-        project_ids = sorted([str(pid) for pid in df_geo['project_id'].dropna().unique().tolist() if pid])
+        # Get unique project IDs for suggestions (cache to avoid recomputing)
+        if 'cached_project_ids' not in st.session_state or len(st.session_state.cached_project_ids) != len(df_geo):
+            project_ids = sorted([str(pid) for pid in df_geo['project_id'].dropna().unique().tolist() if pid])
+            st.session_state.cached_project_ids = project_ids
+        else:
+            project_ids = st.session_state.cached_project_ids
         
         # Search input with autocomplete suggestions
         search_col1, search_col2 = st.columns([3, 1])
         
         with search_col1:
+            # Preserve search query in input
+            default_search = st.session_state.get('last_search_id', '')
             search_query = st.text_input(
                 "Enter Project ID to search:",
                 placeholder="Type project ID or select from dropdown...",
-                key="project_id_search"
+                key="project_id_search",
+                value=default_search if default_search else ''
             )
         
         with search_col2:
-            # Quick select from dropdown
+            # Quick select from dropdown (limit to first 100 for performance)
+            dropdown_options = ["None"] + project_ids[:100]
+            # Try to preserve current selection
+            current_dropdown = st.session_state.get('last_search_id', 'None')
+            if current_dropdown in dropdown_options:
+                dropdown_index = dropdown_options.index(current_dropdown)
+            else:
+                dropdown_index = 0
+            
             selected_from_dropdown = st.selectbox(
                 "Or select from list:",
-                options=["None"] + project_ids[:100],  # Limit dropdown to first 100 for performance
-                index=0,
+                options=dropdown_options,
+                index=dropdown_index,
                 key="project_id_dropdown"
             )
         
@@ -392,33 +407,47 @@ def render_map(data: pd.DataFrame):
         elif search_query and search_query.strip():
             search_id = search_query.strip()
         
-        # Search for project
+        # Search for project - use session state to avoid unnecessary reruns
+        search_triggered = False
+        
+        # Check if search was triggered (from text input or dropdown)
         if search_id:
-            matching_projects = df_geo[df_geo['project_id'].astype(str).str.contains(search_id, case=False, na=False)]
-            
-            if not matching_projects.empty:
-                if len(matching_projects) == 1:
-                    # Exact match, show it
-                    selected_project = matching_projects.iloc[0].to_dict()
-                    st.session_state.selected_project = selected_project
-                    st.session_state.show_info_card = True
-                    st.success(f"✅ Found Project ID: {search_id}")
-                    st.rerun()
-                else:
-                    # Multiple matches, show list
-                    st.info(f"Found {len(matching_projects)} matching projects. Select one:")
-                    match_options = [f"{row.get('project_id', 'N/A')} - {row.get('project_name', 'N/A')}" 
-                                    for idx, row in matching_projects.head(10).iterrows()]
-                    selected_match = st.selectbox("Select project:", options=["None"] + match_options)
-                    
-                    if selected_match != "None":
-                        match_idx = match_options.index(selected_match)
-                        selected_project = matching_projects.iloc[match_idx].to_dict()
+            # Only search if the search_id changed or no project is currently selected
+            current_search = st.session_state.get('last_search_id', '')
+            if search_id != current_search or st.session_state.selected_project is None:
+                # Perform search
+                matching_projects = df_geo[df_geo['project_id'].astype(str).str.contains(search_id, case=False, na=False)]
+                
+                if not matching_projects.empty:
+                    if len(matching_projects) == 1:
+                        # Exact match, show it immediately
+                        selected_project = matching_projects.iloc[0].to_dict()
                         st.session_state.selected_project = selected_project
                         st.session_state.show_info_card = True
-                        st.rerun()
-            else:
-                st.warning(f"⚠️ No project found with ID: {search_id}")
+                        st.session_state.last_search_id = search_id
+                        st.success(f"✅ Found Project ID: {search_id}")
+                        search_triggered = True
+                    else:
+                        # Multiple matches, show list
+                        st.info(f"Found {len(matching_projects)} matching projects. Select one:")
+                        match_options = [f"{row.get('project_id', 'N/A')} - {row.get('project_name', 'N/A')}" 
+                                        for idx, row in matching_projects.head(10).iterrows()]
+                        selected_match = st.selectbox("Select project:", options=["None"] + match_options, key="project_match_select")
+                        
+                        if selected_match != "None":
+                            match_idx = match_options.index(selected_match)
+                            selected_project = matching_projects.iloc[match_idx].to_dict()
+                            st.session_state.selected_project = selected_project
+                            st.session_state.show_info_card = True
+                            st.session_state.last_search_id = search_id
+                            search_triggered = True
+                else:
+                    st.warning(f"⚠️ No project found with ID: {search_id}")
+                    st.session_state.last_search_id = search_id
+        
+        # Only rerun if search was actually triggered and project was selected
+        if search_triggered and st.session_state.selected_project is not None:
+            st.rerun()
         
         # Download CSV button
         st.markdown("### 📥 Download Data")
@@ -547,6 +576,10 @@ def main():
         st.session_state.show_info_card = False
     if "selected_project" not in st.session_state:
         st.session_state.selected_project = None
+    if "last_search_id" not in st.session_state:
+        st.session_state.last_search_id = ''
+    if "cached_project_ids" not in st.session_state:
+        st.session_state.cached_project_ids = []
     
     # Top navigation
     render_top_navigation()
