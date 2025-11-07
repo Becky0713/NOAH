@@ -803,24 +803,44 @@ def main():
                     # Create a mask to check multiple fields
                     mask = pd.Series([False] * len(df), index=df.index)
                     
-                    # Check street_name field
-                    if 'street_name' in df.columns:
-                        street_name_str = df['street_name'].astype(str).fillna('').str.lower()
-                        mask = mask | street_name_str.str.contains(street_filter, case=False, na=False)
+                    # Check all possible street name fields
+                    street_fields = ['street_name', 'streetname', 'street', 'street__name', 'street_name_1']
+                    for field in street_fields:
+                        if field in df.columns:
+                            field_str = df[field].astype(str).fillna('').str.lower()
+                            mask = mask | field_str.str.contains(street_filter, case=False, na=False)
                     
-                    # Check address field
+                    # Check address field (which may contain street name)
                     if 'address' in df.columns:
                         address_str = df['address'].astype(str).fillna('').str.lower()
                         mask = mask | address_str.str.contains(street_filter, case=False, na=False)
                     
                     # Check house_number + street_name combination
-                    if 'house_number' in df.columns and 'street_name' in df.columns:
-                        full_address = (df['house_number'].astype(str).fillna('') + ' ' + 
-                                       df['street_name'].astype(str).fillna('')).str.strip().str.lower()
-                        mask = mask | full_address.str.contains(street_filter, case=False, na=False)
+                    if 'house_number' in df.columns:
+                        # Try with street_name field
+                        if 'street_name' in df.columns:
+                            full_address = (df['house_number'].astype(str).fillna('') + ' ' + 
+                                           df['street_name'].astype(str).fillna('')).str.strip().str.lower()
+                            mask = mask | full_address.str.contains(street_filter, case=False, na=False)
+                        # Also try with any street field
+                        for field in street_fields:
+                            if field in df.columns:
+                                full_address = (df['house_number'].astype(str).fillna('') + ' ' + 
+                                               df[field].astype(str).fillna('')).str.strip().str.lower()
+                                mask = mask | full_address.str.contains(street_filter, case=False, na=False)
+                    
+                    # Check project_name field (may contain street name)
+                    if 'project_name' in df.columns:
+                        project_name_str = df['project_name'].astype(str).fillna('').str.lower()
+                        mask = mask | project_name_str.str.contains(street_filter, case=False, na=False)
                     
                     # Apply the mask
-                    df = df[mask]
+                    if mask.any():
+                        df = df[mask]
+                    else:
+                        # If no matches found, set df to empty and show warning
+                        df = df.iloc[0:0]  # Create empty DataFrame with same columns
+                        st.warning(f"⚠️ No projects found matching street name: '{filter_params['street_name']}'. Try checking available fields in Debug Info.")
                 
                 filtered_count = len(df)
                 if original_count != filtered_count:
@@ -828,10 +848,18 @@ def main():
                 else:
                     st.write(f"📍 Showing {len(df)} projects")
                 
-                # Debug: Show available fields if requested
+                # Debug: Show available fields if requested (especially useful for street name filtering)
                 if st.checkbox("🔍 Show Debug Info", value=False):
                     with st.expander("📋 Debug Information"):
-                        st.write("**Available columns:**", list(df.columns))
+                        st.write("**Available columns:**", sorted(list(df.columns)))
+                        # Show sample of street-related fields
+                        street_related_cols = [col for col in df.columns if any(keyword in col.lower() for keyword in ['street', 'address', 'house', 'name'])]
+                        if street_related_cols:
+                            st.write("**Street/Address related columns:**", street_related_cols)
+                            if len(df) > 0:
+                                st.write("**Sample values from street-related fields:**")
+                                sample_df = df[street_related_cols].head(5)
+                                st.dataframe(sample_df)
                         st.write("**Sample raw data (first row):**")
                         if '_raw' in df.columns and len(df) > 0:
                             sample_raw = df['_raw'].iloc[0]
