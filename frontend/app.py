@@ -16,6 +16,36 @@ import time
 # Backend URL
 BACKEND_URL = "https://nyc-housing-backend.onrender.com"
 
+# Zillow ZORI (Zip-level rent index) CSV
+ZILLOW_ZORI_URL = "https://files.zillowstatic.com/research/public_csvs/zori/Zip_ZORI_AllHomesPlusMultifamily_SSA.csv"
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def fetch_zillow_rent_data():
+    """Fetch the latest Zillow ZIP-level rent data for New York State."""
+    try:
+        zillow_df = pd.read_csv(ZILLOW_ZORI_URL)
+        # Keep only New York State ZIP codes
+        zillow_df = zillow_df[zillow_df["StateName"] == "NY"].copy()
+        if zillow_df.empty:
+            return pd.DataFrame(columns=["zipcode", "average_rent"]), None
+
+        latest_month = zillow_df.columns[-1]
+
+        zillow_df = zillow_df[["RegionName", latest_month]].copy()
+        zillow_df.columns = ["zipcode", "average_rent"]
+
+        zillow_df["zipcode"] = zillow_df["zipcode"].astype(str).str.zfill(5)
+        zillow_df["average_rent"] = (
+            pd.to_numeric(zillow_df["average_rent"], errors="coerce")
+            .round()
+            .astype("Int64")
+        )
+
+        return zillow_df, latest_month
+    except Exception as exc:  # noqa: BLE001
+        st.warning(f"⚠️ Failed to fetch Zillow rent data: {str(exc)[:150]}")
+        return pd.DataFrame(columns=["zipcode", "average_rent"]), None
+
 # Load glossary data
 @st.cache_data
 def load_glossary_data() -> List[Dict[str, Any]]:
@@ -308,6 +338,13 @@ def render_map(data: pd.DataFrame):
     if 'postcode' not in df_geo.columns:
         df_geo['postcode'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
     df_geo['postcode'] = df_geo['postcode'].fillna('').astype(str)
+
+    # Prepare Zillow average rent display
+    if 'average_rent' not in df_geo.columns:
+        df_geo['average_rent'] = pd.Series([pd.NA] * len(df_geo), index=df_geo.index)
+    df_geo['average_rent_display'] = df_geo['average_rent'].apply(
+        lambda x: f"${int(x):,}" if pd.notna(x) else "N/A"
+    )
     
     # Use building_completion_date if available, otherwise fall back to project_completion_date
     # Check if building_completion_display already exists (from data processing)
@@ -344,6 +381,7 @@ def render_map(data: pd.DataFrame):
         <b>Project ID: {project_id}</b><br/>
         Borough: {borough}<br/>
         Postcode: {postcode}<br/>
+        Average Rent (Zillow): {average_rent_display}<br/>
         Building Completion: {building_completion_display}<br/>
         <br/>
         <b>Income-Restricted Units:</b><br/>
@@ -526,6 +564,21 @@ def render_info_card_section():
         st.write(f"**Project Name:** {get_val('project_name')}")
         st.write(f"**Borough:** {get_val('borough', get_val('region'))}")
         st.write(f"**Postcode:** {get_val('postcode')}")
+
+        avg_rent_val = project.get('average_rent', None)
+        rent_display = 'N/A'
+        if avg_rent_val is not None and avg_rent_val != 'N/A' and not pd.isna(avg_rent_val):
+            try:
+                rent_display = f"${int(float(avg_rent_val)):,}"
+            except (ValueError, TypeError):  # noqa: BLE001
+                rent_display = 'N/A'
+
+        zillow_label = st.session_state.get('zillow_latest_month_label') or st.session_state.get('zillow_latest_month')
+        if zillow_label:
+            st.write(f"**Average Rent (Zillow ZORI {zillow_label}):** {rent_display}")
+        else:
+            st.write(f"**Average Rent (Zillow ZORI):** {rent_display}")
+ 
         st.write(f"**Building ID:** {get_val('building_id')}")
         st.write(f"**BBL:** {get_val('bbl')}")
         st.write(f"**BIN:** {get_val('bin')}")
@@ -726,6 +779,29 @@ def main():
                     else:
                         # Fill NaN values
                         df[col] = df[col].fillna('')
+
+                # Merge Zillow rent data by ZIP code (postcode)
+                zillow_df, zillow_latest_month = fetch_zillow_rent_data()
+
+                if zillow_latest_month:
+                    try:
+                        month_label = pd.to_datetime(zillow_latest_month).strftime("%b %Y")
+                    except Exception:  # noqa: BLE001
+                        month_label = zillow_latest_month
+                    st.session_state["zillow_latest_month"] = zillow_latest_month
+                    st.session_state["zillow_latest_month_label"] = month_label
+                else:
+                    st.session_state["zillow_latest_month"] = None
+                    st.session_state["zillow_latest_month_label"] = None
+
+                if not zillow_df.empty:
+                    df['postcode_clean'] = df['postcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                    df = df.merge(zillow_df, how='left', left_on='postcode_clean', right_on='zipcode')
+                    df.drop(columns=['zipcode', 'postcode_clean'], inplace=True)
+                    if 'average_rent' in df.columns:
+                        df['average_rent'] = df['average_rent'].astype('Int64')
+                else:
+                    df['average_rent'] = pd.Series([pd.NA] * len(df), dtype='Int64')
                 
                 # Handle building_completion_date with fallback to project_completion_date
                 if 'building_completion_date' not in df.columns:
