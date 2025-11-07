@@ -446,7 +446,7 @@ def render_map(data: pd.DataFrame):
                             st.session_state.selected_project = selected_project
                             st.session_state.show_info_card = True
                             st.session_state.last_search_id = search_id
-                            st.rerun()
+                            # Don't rerun - let it continue to show info card below
                 else:
                     st.warning(f"⚠️ No project found with ID: {search_id}")
                     st.session_state.last_search_id = search_id
@@ -483,8 +483,10 @@ def render_info_card_section():
     if st.button("❌ Close", type="secondary", use_container_width=True):
         st.session_state.show_info_card = False
         st.session_state.selected_project = None
+        st.session_state.last_search_id = ''  # Clear search to allow re-search
         st.rerun()
     
+    # Always check if project is selected (don't rely on show_info_card flag)
     if st.session_state.selected_project is not None:
         project = st.session_state.selected_project
         
