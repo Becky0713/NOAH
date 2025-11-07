@@ -407,16 +407,22 @@ def render_map(data: pd.DataFrame):
         elif search_query and search_query.strip():
             search_id = search_query.strip()
         
-        # Search for project - use session state to avoid unnecessary reruns
-        search_triggered = False
-        
-        # Check if search was triggered (from text input or dropdown)
+        # Search for project - optimized to avoid unnecessary searches and reruns
         if search_id:
-            # Only search if the search_id changed or no project is currently selected
+            # Only search if the search_id changed
             current_search = st.session_state.get('last_search_id', '')
-            if search_id != current_search or st.session_state.selected_project is None:
-                # Perform search
-                matching_projects = df_geo[df_geo['project_id'].astype(str).str.contains(search_id, case=False, na=False)]
+            if search_id != current_search:
+                # Convert project_id to string once for better performance
+                project_id_str = df_geo['project_id'].astype(str)
+                
+                # Try exact match first (much faster than contains)
+                exact_match = df_geo[project_id_str == search_id]
+                
+                if not exact_match.empty:
+                    matching_projects = exact_match
+                else:
+                    # Fall back to contains search only if no exact match
+                    matching_projects = df_geo[project_id_str.str.contains(search_id, case=False, na=False)]
                 
                 if not matching_projects.empty:
                     if len(matching_projects) == 1:
@@ -426,7 +432,7 @@ def render_map(data: pd.DataFrame):
                         st.session_state.show_info_card = True
                         st.session_state.last_search_id = search_id
                         st.success(f"✅ Found Project ID: {search_id}")
-                        search_triggered = True
+                        st.rerun()
                     else:
                         # Multiple matches, show list
                         st.info(f"Found {len(matching_projects)} matching projects. Select one:")
@@ -440,14 +446,10 @@ def render_map(data: pd.DataFrame):
                             st.session_state.selected_project = selected_project
                             st.session_state.show_info_card = True
                             st.session_state.last_search_id = search_id
-                            search_triggered = True
+                            st.rerun()
                 else:
                     st.warning(f"⚠️ No project found with ID: {search_id}")
                     st.session_state.last_search_id = search_id
-        
-        # Only rerun if search was actually triggered and project was selected
-        if search_triggered and st.session_state.selected_project is not None:
-            st.rerun()
         
         # Download CSV button
         st.markdown("### 📥 Download Data")
