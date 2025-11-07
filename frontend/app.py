@@ -293,8 +293,19 @@ def render_map(data: pd.DataFrame):
         df_geo['postcode'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
     df_geo['postcode'] = df_geo['postcode'].fillna('').astype(str)
     
+    # Use building_completion_date if available, otherwise fall back to project_completion_date
     if 'building_completion_date' not in df_geo.columns:
-        df_geo['building_completion_date'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
+        # Try to use project_completion_date as fallback
+        if 'project_completion_date' in df_geo.columns:
+            df_geo['building_completion_date'] = df_geo['project_completion_date']
+        else:
+            df_geo['building_completion_date'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
+    else:
+        # If building_completion_date exists but is mostly empty, use project_completion_date as fallback
+        non_empty_count = df_geo['building_completion_date'].notna().sum()
+        if non_empty_count < len(df_geo) * 0.1:  # If less than 10% have data, use project_completion_date
+            if 'project_completion_date' in df_geo.columns:
+                df_geo['building_completion_date'] = df_geo['project_completion_date'].fillna(df_geo['building_completion_date'])
     
     # Format building completion date (show "In Progress" if empty)
     df_geo['building_completion_display'] = df_geo['building_completion_date'].fillna('').apply(
@@ -453,7 +464,11 @@ def render_info_card_section():
         st.write(f"**Project Start Date:** {get_val('project_start_date')}")
         st.write(f"**Project Completion Date:** {get_val('project_completion_date')}")
         
-        building_date = get_val('building_completion_date', 'In Progress')
+        # Use building_completion_date if available, otherwise use project_completion_date
+        building_date = get_val('building_completion_date', None)
+        if not building_date or building_date == 'N/A' or building_date == '':
+            # Fall back to project_completion_date
+            building_date = get_val('project_completion_date', 'In Progress')
         if building_date == '' or building_date == 'N/A':
             building_date = 'In Progress'
         st.write(f"**Building Completion Date:** {building_date}")
@@ -626,13 +641,29 @@ def main():
                     else:
                         df['borough'] = pd.Series([''] * len(df), dtype=str, index=df.index)
                 
-                for col in ['project_id', 'postcode', 'building_completion_date']:
+                for col in ['project_id', 'postcode']:
                     if col not in df.columns:
                         # Create a new column with the same length as the DataFrame
                         df[col] = pd.Series([''] * len(df), dtype=str, index=df.index)
                     else:
                         # Fill NaN values
                         df[col] = df[col].fillna('')
+                
+                # Handle building_completion_date with fallback to project_completion_date
+                if 'building_completion_date' not in df.columns:
+                    # Try to use project_completion_date as fallback
+                    if 'project_completion_date' in df.columns:
+                        df['building_completion_date'] = df['project_completion_date']
+                    else:
+                        df['building_completion_date'] = pd.Series([''] * len(df), dtype=str, index=df.index)
+                else:
+                    # If building_completion_date exists but is mostly empty, use project_completion_date as fallback
+                    non_empty_count = df['building_completion_date'].notna().sum()
+                    if non_empty_count < len(df) * 0.1:  # If less than 10% have data, use project_completion_date
+                        if 'project_completion_date' in df.columns:
+                            df['building_completion_date'] = df['project_completion_date'].fillna(df['building_completion_date'])
+                    else:
+                        df['building_completion_date'] = df['building_completion_date'].fillna('')
                 
                 # Set defaults for numeric fields and ensure they're numeric
                 numeric_fields = ['extremely_low_income_units', 'very_low_income_units', 'low_income_units',
