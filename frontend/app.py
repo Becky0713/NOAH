@@ -497,11 +497,6 @@ def render_map(data: pd.DataFrame):
             "text/csv",
             use_container_width=True
         )
-        
-        # Show info card below search if project is selected
-        if st.session_state.selected_project is not None:
-            st.divider()
-            render_info_card_section()
 
 def render_info_card_section():
     """Render the info card section below search"""
