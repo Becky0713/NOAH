@@ -428,11 +428,13 @@ def render_map(data: pd.DataFrame):
                     if len(matching_projects) == 1:
                         # Exact match, show it immediately
                         selected_project = matching_projects.iloc[0].to_dict()
+                        # Ensure all data is properly extracted
                         st.session_state.selected_project = selected_project
                         st.session_state.show_info_card = True
                         st.session_state.last_search_id = search_id
                         st.success(f"✅ Found Project ID: {search_id}")
-                        # Don't rerun here - let it continue to show info card below
+                        # Rerun to ensure info card displays properly
+                        st.rerun()
                     else:
                         # Multiple matches, show list
                         st.info(f"Found {len(matching_projects)} matching projects. Select one:")
@@ -446,7 +448,8 @@ def render_map(data: pd.DataFrame):
                             st.session_state.selected_project = selected_project
                             st.session_state.show_info_card = True
                             st.session_state.last_search_id = search_id
-                            # Don't rerun - let it continue to show info card below
+                            # Rerun to ensure info card displays properly
+                            st.rerun()
                 else:
                     st.warning(f"⚠️ No project found with ID: {search_id}")
                     st.session_state.last_search_id = search_id
