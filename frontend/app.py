@@ -201,14 +201,30 @@ def render_filter_panel():
         else:
             sample_size = st.slider("Sample Size", min_value=10, max_value=5000, value=100, step=50)
         
-        # Borough filter
-        st.markdown("#### 📍 Location Filter")
+        # Location filters
+        st.markdown("#### 📍 Location Filters")
         borough_options = ["", "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
         selected_borough = st.selectbox("Borough", borough_options, index=0)
+        
+        # Postcode filter
+        postcode_filter = st.text_input(
+            "Postcode (e.g., 10025)",
+            placeholder="Enter postcode to filter...",
+            key="postcode_filter"
+        )
+        
+        # Street name filter
+        street_name_filter = st.text_input(
+            "Street Name (e.g., Broadway)",
+            placeholder="Enter street name to filter...",
+            key="street_name_filter"
+        )
         
         return {
             "sample_size": sample_size,
             "borough": selected_borough,
+            "postcode": postcode_filter.strip() if postcode_filter else "",
+            "street_name": street_name_filter.strip() if street_name_filter else "",
             "min_units": 0,
             "max_units": 0,
             "start_date_from": "",
@@ -756,7 +772,39 @@ def main():
                         df[col] = pd.to_numeric(df[col], errors='coerce')
                         df[col] = df[col].fillna(0).astype(int)
                 
-                st.write(f"📍 Showing {len(df)} projects")
+                # Apply frontend filters (postcode and street name)
+                original_count = len(df)
+                
+                # Filter by postcode if provided
+                if filter_params.get("postcode") and filter_params["postcode"]:
+                    postcode_filter = filter_params["postcode"].strip()
+                    if 'postcode' in df.columns:
+                        # Convert postcode to string for comparison
+                        df['postcode_str'] = df['postcode'].astype(str)
+                        df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
+                    elif 'postal_code' in df.columns:
+                        df['postcode_str'] = df['postal_code'].astype(str)
+                        df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
+                    elif 'zip_code' in df.columns:
+                        df['postcode_str'] = df['zip_code'].astype(str)
+                        df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
+                
+                # Filter by street name if provided
+                if filter_params.get("street_name") and filter_params["street_name"]:
+                    street_filter = filter_params["street_name"].strip()
+                    if 'street_name' in df.columns:
+                        df['street_name_str'] = df['street_name'].astype(str)
+                        df = df[df['street_name_str'].str.contains(street_filter, case=False, na=False)]
+                    # Also check address field
+                    elif 'address' in df.columns:
+                        df['address_str'] = df['address'].astype(str)
+                        df = df[df['address_str'].str.contains(street_filter, case=False, na=False)]
+                
+                filtered_count = len(df)
+                if original_count != filtered_count:
+                    st.info(f"📍 Showing {filtered_count} of {original_count} projects (filtered by location)")
+                else:
+                    st.write(f"📍 Showing {len(df)} projects")
                 
                 # Debug: Show available fields if requested
                 if st.checkbox("🔍 Show Debug Info", value=False):
