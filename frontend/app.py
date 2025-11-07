@@ -461,9 +461,14 @@ def render_map(data: pd.DataFrame):
             "text/csv",
             use_container_width=True
         )
+        
+        # Show info card below search if project is selected
+        if st.session_state.selected_project is not None:
+            st.divider()
+            render_info_card_section()
 
 def render_info_card_section():
-    """Render the info card section as a floating panel"""
+    """Render the info card section below search"""
     st.markdown("### 📋 Project Details")
     
     # Add a close button
@@ -590,12 +595,8 @@ def main():
     with st.sidebar:
         filter_params = render_filter_panel()
     
-    # Main layout: Map takes 70-75% width, info card takes 20-25%
-    if st.session_state.show_info_card:
-        col_map, col_info = st.columns([0.75, 0.25])
-    else:
-        col_map = st.container()
-        col_info = None
+    # Main layout: Full width for map and info card
+    col_map = st.container()
     
     with col_map:
         # Center map - takes majority of screen
@@ -771,11 +772,6 @@ def main():
             
             **Try refreshing the page in a few moments.**
             """)
-    
-    if col_info:
-        with col_info:
-            # Right info card - floating panel style
-            render_info_card_section()
 
 if __name__ == "__main__":
     main()
