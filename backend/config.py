@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     # Socrata (NYC Open Data)
     socrata_base_url: str = "https://data.cityofnewyork.us"
     socrata_app_token: Optional[str] = None
-    # Dataset and field mappings for normalization
-    socrata_dataset_id: Optional[str] = "hq68-rnsi"
+    # Dataset ID - using hg8x-zxpr (Affordable Housing Production by Project)
+    socrata_dataset_id: Optional[str] = "hg8x-zxpr"
     socrata_field_id: str = "project_id"
     socrata_field_address: str = "project_name"  # 使用项目名称作为地址
     socrata_field_latitude: str = "latitude"  # 这个数据集没有坐标
@@ -46,9 +46,6 @@ class Settings(BaseSettings):
     
     # Legacy SQLite settings (for backward compatibility)
     db_path: str = "./data/nyc_housing.db"
-
-    # Default dataset for Socrata
-    socrata_dataset_id: Optional[str] = "hg8x-zxpr"
 
     class Config:
         env_file = "../.env"

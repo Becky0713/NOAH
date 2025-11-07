@@ -138,15 +138,23 @@ class SocrataHousingClient(BaseHousingClient):
         
         if where_conditions:
             params["$where"] = " AND ".join(where_conditions)
+        
+        # Log request details for debugging (without exposing token)
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Socrata API request: URL={url}, has_token={bool(settings.socrata_app_token)}, dataset={settings.socrata_dataset_id}")
+        
         try:
-            resp = await self._get_with_retries(url, headers=self._headers(), params=params)
+            headers = self._headers()
+            resp = await self._get_with_retries(url, headers=headers, params=params)
             # Check if response is successful
             resp.raise_for_status()
             
             try:
                 data = resp.json()
-            except Exception:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 # If JSON parsing fails, return empty list
+                logger.error(f"Failed to parse Socrata API response: {e}")
                 return []
             
             # Check if Socrata API returned an error
@@ -154,21 +162,26 @@ class SocrataHousingClient(BaseHousingClient):
                 # Socrata API errors are usually in format: {"error": true, "message": "..."}
                 if data.get("error") or "message" in data:
                     error_msg = data.get("message", "Unknown Socrata API error")
+                    logger.error(f"Socrata API error: {error_msg}")
                     # Log error but don't crash - return empty list
                     # This allows frontend to continue working
                     return []
             
             if isinstance(data, list):
+                logger.info(f"Socrata API returned {len(data)} records")
                 return data
             
             # If dict (error structure) or other type, return empty list to avoid 500
+            logger.warning(f"Socrata API returned unexpected data type: {type(data)}")
             return []
         except httpx.HTTPStatusError as e:
             # Handle HTTP errors (400, 404, 500, etc.)
+            logger.error(f"Socrata API HTTP error: {e.response.status_code} - {e.response.text[:200]}")
             # Don't crash the backend - return empty list
             return []
         except Exception as e:  # noqa: BLE001
             # Handle any other errors (network, timeout, etc.)
+            logger.error(f"Socrata API request failed: {str(e)[:200]}")
             return []
 
 
