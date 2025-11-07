@@ -260,7 +260,8 @@ def render_map(data: pd.DataFrame):
     )
     
     # Use single color for all points (blue)
-    df_geo["color"] = [0, 100, 200, 140]  # Blue color for all points
+    # Create a list of colors for each row
+    df_geo["color"] = [[0, 100, 200, 140]] * len(df_geo)  # Blue color for all points
     
     # Create PyDeck layer
     layer = pdk.Layer(
@@ -277,19 +278,23 @@ def render_map(data: pd.DataFrame):
     # Ensure all tooltip fields exist with defaults
     # Handle both column access methods
     if 'project_id' not in df_geo.columns:
-        df_geo['project_id'] = ''
+        df_geo['project_id'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
     df_geo['project_id'] = df_geo['project_id'].fillna('').astype(str)
     
     if 'borough' not in df_geo.columns:
-        df_geo['borough'] = df_geo.get('region', '')
-    df_geo['borough'] = df_geo['borough'].fillna(df_geo.get('region', '')).fillna('')
+        if 'region' in df_geo.columns:
+            df_geo['borough'] = df_geo['region'].fillna('')
+        else:
+            df_geo['borough'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
+    else:
+        df_geo['borough'] = df_geo['borough'].fillna(df_geo.get('region', '')).fillna('')
     
     if 'postcode' not in df_geo.columns:
-        df_geo['postcode'] = ''
+        df_geo['postcode'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
     df_geo['postcode'] = df_geo['postcode'].fillna('').astype(str)
     
     if 'building_completion_date' not in df_geo.columns:
-        df_geo['building_completion_date'] = ''
+        df_geo['building_completion_date'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
     
     # Format building completion date (show "In Progress" if empty)
     df_geo['building_completion_display'] = df_geo['building_completion_date'].fillna('').apply(
@@ -589,7 +594,7 @@ def main():
                     if 'project_id' not in df.columns and not project_id_found:
                         # Backend API might have already added it
                         if 'project_id' not in df.columns:
-                            df['project_id'] = ''
+                            df['project_id'] = pd.Series([''] * len(df), dtype=str, index=df.index)
                     
                     # Do the same for other critical fields
                     field_mappings = {
@@ -613,13 +618,13 @@ def main():
                     if 'region' in df.columns:
                         df['borough'] = df['region'].fillna('')
                     else:
-                        df['borough'] = ''
+                        df['borough'] = pd.Series([''] * len(df), dtype=str, index=df.index)
                 elif df['borough'].isna().all():
                     # If borough is all NaN, try to fill from region column
                     if 'region' in df.columns:
                         df['borough'] = df['region'].fillna('')
                     else:
-                        df['borough'] = ''
+                        df['borough'] = pd.Series([''] * len(df), dtype=str, index=df.index)
                 
                 for col in ['project_id', 'postcode', 'building_completion_date']:
                     if col not in df.columns:
