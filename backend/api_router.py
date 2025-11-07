@@ -50,7 +50,7 @@ async def health() -> dict:
 async def debug_config():
     """Debug endpoint to check configuration (without exposing sensitive data)"""
     try:
-        from ..config import settings
+        from .config import settings
         return {
             "socrata_base_url": settings.socrata_base_url,
             "socrata_dataset_id": settings.socrata_dataset_id,
