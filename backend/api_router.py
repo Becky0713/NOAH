@@ -46,6 +46,18 @@ async def get_client():
 async def health() -> dict:
     return {"status": "ok"}
 
+@router.get("/debug/config", tags=["debug"])
+async def debug_config():
+    """Debug endpoint to check configuration (without exposing sensitive data)"""
+    from ..config import settings
+    return {
+        "socrata_base_url": settings.socrata_base_url,
+        "socrata_dataset_id": settings.socrata_dataset_id,
+        "has_socrata_token": bool(settings.socrata_app_token),
+        "token_length": len(settings.socrata_app_token) if settings.socrata_app_token else 0,
+        "data_provider": settings.data_provider,
+    }
+
 
 @router.get("/v1/regions", response_model=List[Region], tags=["metadata"])
 async def list_regions() -> List[Region]:
