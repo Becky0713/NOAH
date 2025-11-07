@@ -407,6 +407,13 @@ def render_map(data: pd.DataFrame):
         elif search_query and search_query.strip():
             search_id = search_query.strip()
         
+        # If we have a selected project from previous search, use its ID as search_id
+        if not search_id and st.session_state.selected_project is not None:
+            search_id = str(st.session_state.selected_project.get('project_id', ''))
+            # Update input field to show the current project ID
+            if search_id:
+                st.session_state.last_search_id = search_id
+        
         # Search for project - optimized to avoid unnecessary searches and reruns
         if search_id:
             # Only search if the search_id changed
@@ -453,12 +460,14 @@ def render_map(data: pd.DataFrame):
                 else:
                     st.warning(f"⚠️ No project found with ID: {search_id}")
                     st.session_state.last_search_id = search_id
-            elif st.session_state.selected_project is not None:
-                # If search_id matches last_search_id and we have a selected project, show success message
-                st.success(f"✅ Showing Project ID: {search_id}")
+                    st.session_state.selected_project = None
         
-        # Show info card below search if project is selected
+        # Show info card below search if project is selected (always check this)
         if st.session_state.selected_project is not None:
+            # Show success message if we have a selected project
+            current_display_id = str(st.session_state.selected_project.get('project_id', ''))
+            if current_display_id:
+                st.success(f"✅ Showing Project ID: {current_display_id}")
             st.divider()
             render_info_card_section()
         
