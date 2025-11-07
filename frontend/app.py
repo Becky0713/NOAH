@@ -31,24 +31,31 @@ def load_glossary_data() -> List[Dict[str, Any]]:
 # API functions with retry logic for Render cold starts
 def _make_request_with_retry(url: str, params: dict = None, max_retries: int = 3) -> requests.Response:
     """Make HTTP request with retry logic for Render cold starts"""
+    # Increased timeout for Render cold starts (can take 30-60 seconds)
+    timeout_seconds = 60
+    
     for attempt in range(max_retries):
         try:
-            resp = requests.get(url, params=params, timeout=30)
+            resp = requests.get(url, params=params, timeout=timeout_seconds)
             resp.raise_for_status()
             return resp
         except requests.exceptions.Timeout:
             if attempt < max_retries - 1:
-                st.warning(f"Request timeout (attempt {attempt + 1}/{max_retries}). Retrying...")
-                time.sleep(2 ** attempt)  # Exponential backoff
+                wait_time = 2 ** attempt
+                st.warning(f"⏳ Request timeout (attempt {attempt + 1}/{max_retries}). Waiting {wait_time}s before retry...")
+                time.sleep(wait_time)  # Exponential backoff
                 continue
             else:
+                st.error(f"❌ Request timed out after {max_retries} attempts. The backend may be slow or unavailable.")
                 raise
         except requests.exceptions.RequestException as e:
             if attempt < max_retries - 1:
-                st.warning(f"Request failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying...")
-                time.sleep(2 ** attempt)
+                wait_time = 2 ** attempt
+                st.warning(f"⚠️ Request failed (attempt {attempt + 1}/{max_retries}): {str(e)[:100]}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
                 continue
             else:
+                st.error(f"❌ Request failed after {max_retries} attempts: {str(e)[:200]}")
                 raise
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -73,53 +80,66 @@ def fetch_records_paginated(
     """Fetch records with pagination support for large datasets"""
     all_records = []
     offset = 0
-    batch_size = 1000  # Fetch in batches of 1000
+    # For small limits, fetch all at once; for larger, use batches
+    batch_size = min(limit, 1000)  # Fetch in batches, but don't exceed limit
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    while len(all_records) < limit:
-        current_limit = min(batch_size, limit - len(all_records))
-        
-        status_text.text(f"Fetching data... {len(all_records)}/{limit} records")
-        progress_bar.progress(min(len(all_records) / limit, 1.0))
-        
-        params = {
-            "fields": ",".join(fields),
-            "limit": current_limit,
-            "offset": offset,
-            "min_units": min_units,
-            "max_units": max_units,
-            "start_date_from": start_date_from,
-            "start_date_to": start_date_to
-        }
-        if borough:
-            params["borough"] = borough
-        
-        resp = _make_request_with_retry(f"{BACKEND_URL}/v1/records", params=params)
-        batch = resp.json()
-        
-        if not batch:
-            break  # No more data
-        
-        all_records.extend(batch)
-        offset += len(batch)
-        
-        # If we got less than requested, we've reached the end
-        if len(batch) < current_limit:
-            break
-        
-        # Stop if we've reached the limit
-        if len(all_records) >= limit:
-            break
+    try:
+        while len(all_records) < limit:
+            current_limit = min(batch_size, limit - len(all_records))
+            
+            status_text.text(f"📡 Fetching data... {len(all_records)}/{limit} records")
+            if len(all_records) > 0:
+                progress_bar.progress(min(len(all_records) / limit, 1.0))
+            
+            params = {
+                "fields": ",".join(fields),
+                "limit": current_limit,
+                "offset": offset,
+                "min_units": min_units,
+                "max_units": max_units,
+                "start_date_from": start_date_from,
+                "start_date_to": start_date_to
+            }
+            if borough:
+                params["borough"] = borough
+            
+            try:
+                resp = _make_request_with_retry(f"{BACKEND_URL}/v1/records", params=params)
+                batch = resp.json()
+            except Exception as e:
+                # If request fails, return what we have so far
+                st.error(f"❌ Failed to fetch data: {str(e)[:200]}")
+                if all_records:
+                    st.warning(f"⚠️ Showing {len(all_records)} records that were loaded before the error.")
+                break
+            
+            if not batch or not isinstance(batch, list):
+                break  # No more data or invalid response
+            
+            all_records.extend(batch)
+            offset += len(batch)
+            
+            # If we got less than requested, we've reached the end
+            if len(batch) < current_limit:
+                break
+            
+            # Stop if we've reached the limit
+            if len(all_records) >= limit:
+                break
+    except Exception as e:
+        st.error(f"❌ Error during data fetching: {str(e)[:200]}")
+    finally:
+        if len(all_records) > 0:
+            progress_bar.progress(1.0)
+            status_text.text(f"✅ Loaded {len(all_records)} records")
+            time.sleep(0.5)  # Brief pause to show completion
+        progress_bar.empty()
+        status_text.empty()
     
-    progress_bar.progress(1.0)
-    status_text.text(f"✅ Loaded {len(all_records)} records")
-    time.sleep(0.5)  # Brief pause to show completion
-    progress_bar.empty()
-    status_text.empty()
-    
-    return all_records[:limit]  # Return exactly up to limit
+    return all_records[:limit] if all_records else []  # Return exactly up to limit, or empty list
 
 def fetch_median_income_data():
     """Fetch median household income data from database"""
@@ -537,7 +557,7 @@ def main():
                 start_date_to=filter_params["start_date_to"]
             )
             
-            if records:
+            if records and len(records) > 0:
                 df = pd.DataFrame(records)
                 
                 # Extract data from _raw field - this contains ALL fields from Socrata API
