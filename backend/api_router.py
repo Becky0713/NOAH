@@ -49,14 +49,20 @@ async def health() -> dict:
 @router.get("/debug/config", tags=["debug"])
 async def debug_config():
     """Debug endpoint to check configuration (without exposing sensitive data)"""
-    from ..config import settings
-    return {
-        "socrata_base_url": settings.socrata_base_url,
-        "socrata_dataset_id": settings.socrata_dataset_id,
-        "has_socrata_token": bool(settings.socrata_app_token),
-        "token_length": len(settings.socrata_app_token) if settings.socrata_app_token else 0,
-        "data_provider": settings.data_provider,
-    }
+    try:
+        from ..config import settings
+        return {
+            "socrata_base_url": settings.socrata_base_url,
+            "socrata_dataset_id": settings.socrata_dataset_id,
+            "has_socrata_token": bool(settings.socrata_app_token),
+            "token_length": len(settings.socrata_app_token) if settings.socrata_app_token else 0,
+            "data_provider": settings.data_provider,
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
 
 
 @router.get("/v1/regions", response_model=List[Region], tags=["metadata"])
