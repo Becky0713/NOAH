@@ -796,32 +796,31 @@ def main():
                         df['postcode_str'] = df['zip_code'].astype(str)
                         df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
                 
-                # Filter by street name if provided
+                # Filter by street name if provided (fuzzy match)
                 if filter_params.get("street_name") and filter_params["street_name"]:
-                    street_filter = filter_params["street_name"].strip()
-                    # First try street_name field
+                    street_filter = filter_params["street_name"].strip().lower()
+                    
+                    # Create a mask to check multiple fields
+                    mask = pd.Series([False] * len(df), index=df.index)
+                    
+                    # Check street_name field
                     if 'street_name' in df.columns:
-                        df['street_name_str'] = df['street_name'].astype(str).fillna('')
-                        df = df[df['street_name_str'].str.contains(street_filter, case=False, na=False)]
-                    # Also check address field if street_name filtering didn't work or returned no results
-                    if len(df) == 0 or 'address' in df.columns:
-                        # Reset to original if needed
-                        if len(df) == 0:
-                            df = pd.DataFrame(records)
-                            # Re-extract data if needed
-                            if '_raw' in df.columns:
-                                raw_data = df['_raw'].apply(lambda x: x if isinstance(x, dict) else {})
-                                for key in all_keys:
-                                    if key not in df.columns:
-                                        df[key] = raw_data.apply(lambda x: x.get(key) if isinstance(x, dict) else None)
-                        if 'address' in df.columns:
-                            df['address_str'] = df['address'].astype(str).fillna('')
-                            df = df[df['address_str'].str.contains(street_filter, case=False, na=False)]
-                        # Also check house_number + street_name combination
-                        if 'house_number' in df.columns and 'street_name' in df.columns:
-                            df['full_address'] = (df['house_number'].astype(str).fillna('') + ' ' + 
-                                                  df['street_name'].astype(str).fillna('')).str.strip()
-                            df = df[df['full_address'].str.contains(street_filter, case=False, na=False)]
+                        street_name_str = df['street_name'].astype(str).fillna('').str.lower()
+                        mask = mask | street_name_str.str.contains(street_filter, case=False, na=False)
+                    
+                    # Check address field
+                    if 'address' in df.columns:
+                        address_str = df['address'].astype(str).fillna('').str.lower()
+                        mask = mask | address_str.str.contains(street_filter, case=False, na=False)
+                    
+                    # Check house_number + street_name combination
+                    if 'house_number' in df.columns and 'street_name' in df.columns:
+                        full_address = (df['house_number'].astype(str).fillna('') + ' ' + 
+                                       df['street_name'].astype(str).fillna('')).str.strip().str.lower()
+                        mask = mask | full_address.str.contains(street_filter, case=False, na=False)
+                    
+                    # Apply the mask
+                    df = df[mask]
                 
                 filtered_count = len(df)
                 if original_count != filtered_count:
