@@ -668,6 +668,16 @@ def main():
                         df['building_completion_date'] = df['building_completion_date'].fillna('')
                 
                 # Create building_completion_display column for tooltip
+                # First ensure building_completion_date has a value (use project_completion_date if needed)
+                if 'building_completion_date' in df.columns:
+                    # Fill missing values with project_completion_date if available
+                    if 'project_completion_date' in df.columns:
+                        df['building_completion_date'] = df['building_completion_date'].fillna(df['project_completion_date'])
+                elif 'project_completion_date' in df.columns:
+                    # If building_completion_date doesn't exist, use project_completion_date
+                    df['building_completion_date'] = df['project_completion_date']
+                
+                # Now create the display column
                 df['building_completion_display'] = df['building_completion_date'].fillna('').apply(
                     lambda x: "In Progress" if not x or str(x).strip() == '' else str(x)
                 )
