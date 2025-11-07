@@ -294,23 +294,25 @@ def render_map(data: pd.DataFrame):
     df_geo['postcode'] = df_geo['postcode'].fillna('').astype(str)
     
     # Use building_completion_date if available, otherwise fall back to project_completion_date
-    if 'building_completion_date' not in df_geo.columns:
-        # Try to use project_completion_date as fallback
-        if 'project_completion_date' in df_geo.columns:
-            df_geo['building_completion_date'] = df_geo['project_completion_date']
-        else:
-            df_geo['building_completion_date'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
-    else:
-        # If building_completion_date exists but is mostly empty, use project_completion_date as fallback
-        non_empty_count = df_geo['building_completion_date'].notna().sum()
-        if non_empty_count < len(df_geo) * 0.1:  # If less than 10% have data, use project_completion_date
+    # Check if building_completion_display already exists (from data processing)
+    if 'building_completion_display' not in df_geo.columns:
+        if 'building_completion_date' not in df_geo.columns:
+            # Try to use project_completion_date as fallback
             if 'project_completion_date' in df_geo.columns:
-                df_geo['building_completion_date'] = df_geo['project_completion_date'].fillna(df_geo['building_completion_date'])
-    
-    # Format building completion date (show "In Progress" if empty)
-    df_geo['building_completion_display'] = df_geo['building_completion_date'].fillna('').apply(
-        lambda x: "In Progress" if not x or str(x).strip() == '' else str(x)
-    )
+                df_geo['building_completion_date'] = df_geo['project_completion_date']
+            else:
+                df_geo['building_completion_date'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
+        else:
+            # If building_completion_date exists but is mostly empty, use project_completion_date as fallback
+            non_empty_count = df_geo['building_completion_date'].notna().sum()
+            if non_empty_count < len(df_geo) * 0.1:  # If less than 10% have data, use project_completion_date
+                if 'project_completion_date' in df_geo.columns:
+                    df_geo['building_completion_date'] = df_geo['project_completion_date'].fillna(df_geo['building_completion_date'])
+        
+        # Format building completion date (show "In Progress" if empty)
+        df_geo['building_completion_display'] = df_geo['building_completion_date'].fillna('').apply(
+            lambda x: "In Progress" if not x or str(x).strip() == '' else str(x)
+        )
     
     # Ensure numeric fields exist
     for field in ['extremely_low_income_units', 'very_low_income_units', 'low_income_units',
@@ -664,6 +666,11 @@ def main():
                             df['building_completion_date'] = df['project_completion_date'].fillna(df['building_completion_date'])
                     else:
                         df['building_completion_date'] = df['building_completion_date'].fillna('')
+                
+                # Create building_completion_display column for tooltip
+                df['building_completion_display'] = df['building_completion_date'].fillna('').apply(
+                    lambda x: "In Progress" if not x or str(x).strip() == '' else str(x)
+                )
                 
                 # Set defaults for numeric fields and ensure they're numeric
                 numeric_fields = ['extremely_low_income_units', 'very_low_income_units', 'low_income_units',
