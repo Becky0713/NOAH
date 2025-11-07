@@ -664,10 +664,25 @@ def main():
                 # Render map
                 render_map(df)
             else:
-                st.info("No data found with current filters.")
+                st.warning("⚠️ No data found with current filters.")
+                st.info("💡 **Troubleshooting tips:**")
+                st.markdown("""
+                - Check if the backend is running (may take 30-60s for first request on Render)
+                - Try refreshing the page
+                - Check if your filters are too restrictive
+                - Verify backend URL: `{BACKEND_URL}`
+                """.format(BACKEND_URL=BACKEND_URL))
                 
         except Exception as e:
-            st.error(f"Failed to fetch data: {e}")
+            st.error(f"❌ Failed to fetch data: {str(e)[:300]}")
+            st.info("💡 **This might be due to:**")
+            st.markdown("""
+            - Backend is starting up (first request can take 30-60 seconds on Render)
+            - Network connectivity issues
+            - Backend service is down
+            
+            **Try refreshing the page in a few moments.**
+            """)
     
     if col_info:
         with col_info:
