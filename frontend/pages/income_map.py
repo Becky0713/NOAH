@@ -56,38 +56,38 @@ def get_geo_coordinates_from_db(geo_ids):
         return pd.DataFrame()
 
 def load_income_data():
-    """Load income data - either from upload or database"""
-    
-    # Option 1: Upload CSV file
-    uploaded_file = st.file_uploader(
-        "Upload B19013_clean.csv file",
-        type=['csv'],
-        help="Upload a CSV file with geo_id, tract_name, and median_household_income columns"
-    )
-    
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        # Remove header row if it exists
-        if df.iloc[0, 0] == 'Geography' or df.iloc[0, 0] == 'geo_id':
-            df = df.iloc[1:].reset_index(drop=True)
-        return df
-    
-    # Option 2: Load from database (if table exists)
+    """Load income data directly from the project's PostgreSQL database."""
+
+    table_candidates = [
+        "median_income",
+        "median_household_income",
+    ]
+
     try:
         conn = get_db_connection()
-        query = """
-        SELECT geo_id, tract_name, median_household_income
-        FROM median_household_income
-        WHERE median_household_income IS NOT NULL
-        AND median_household_income != '<NA>'
-        """
-        df = pd.read_sql_query(query, conn)
+        for table_name in table_candidates:
+            try:
+                query = f"""
+                SELECT
+                    geo_id,
+                    tract_name,
+                    median_household_income
+                FROM {table_name}
+                WHERE median_household_income IS NOT NULL
+                AND median_household_income != '<NA>'
+                """
+                df = pd.read_sql_query(query, conn)
+                if not df.empty:
+                    conn.close()
+                    st.success(f"✅ Loaded income data from database table `{table_name}`")
+                    return df
+            except Exception:
+                # Move on to next candidate table
+                continue
         conn.close()
-        if not df.empty:
-            return df
-    except:
-        pass
-    
+    except Exception as e:
+        st.error(f"❌ Failed to load income data from database: {e}")
+
     return pd.DataFrame()
 
 def render_income_map():
@@ -95,8 +95,8 @@ def render_income_map():
     
     st.title("💰 NYC Median Household Income Map")
     st.markdown("""
-    Visualize median household income by census tract. **Darker colors** indicate 
-    higher income areas, while **lighter colors** indicate lower income areas.
+    Visualize median household income by census tract using data stored in your PostgreSQL database.
+    **Darker colors** indicate higher income areas, while **lighter colors** indicate lower income areas.
     """)
     
     # Load income data
@@ -104,7 +104,7 @@ def render_income_map():
         income_df = load_income_data()
     
     if income_df.empty:
-        st.info("💡 Please upload a CSV file with income data or ensure the data exists in the database.")
+        st.info("💡 No income data was found in the configured database. Please ensure the `median_income` (or `median_household_income`) table exists and contains `geo_id`, `tract_name`, `median_household_income` columns.")
         return
     
     # Clean data
