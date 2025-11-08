@@ -75,9 +75,9 @@ def load_income_data():
                     tract_name,
                     median_household_income
                 FROM {table_name}
-                WHERE median_household_income IS NOT NULL
-                AND median_household_income != '<NA>'
-                AND geo_id <> 'Geography'
+                WHERE geo_id IS NOT NULL
+                  AND geo_id <> 'Geography'
+                  AND median_household_income IS NOT NULL
                 """
                 df = pd.read_sql_query(query, conn)
                 if not df.empty:
