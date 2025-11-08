@@ -40,7 +40,11 @@ def get_geo_coordinates_from_db(geo_ids):
         conn = get_db_connection()
 
         query = """
-        SELECT DISTINCT rb.geo_id, rb.latitude, rb.longitude, rb.tract_name
+        SELECT DISTINCT
+            rb.geo_id,
+            ST_Y(rb.geom) AS latitude,
+            ST_X(rb.geom) AS longitude,
+            rb.tract_name
         FROM rent_burden rb
         WHERE rb.geo_id = ANY(%s::text[])
            OR REPLACE(rb.geo_id, '0600000US', '1400000US') = ANY(%s::text[])
