@@ -61,6 +61,8 @@ def load_income_data():
     table_candidates = [
         "median_income",
         "median_household_income",
+        "public.median_income",
+        "public.median_household_income",
     ]
 
     try:
@@ -75,14 +77,17 @@ def load_income_data():
                 FROM {table_name}
                 WHERE median_household_income IS NOT NULL
                 AND median_household_income != '<NA>'
+                AND geo_id <> 'Geography'
                 """
                 df = pd.read_sql_query(query, conn)
                 if not df.empty:
                     conn.close()
                     st.success(f"✅ Loaded income data from database table `{table_name}`")
                     return df
-            except Exception:
-                # Move on to next candidate table
+                else:
+                    st.warning(f"⚠️ Table `{table_name}` returned 0 rows. Check that it contains data.")
+            except Exception as err:
+                st.warning(f"⚠️ Could not load table `{table_name}`: {err}")
                 continue
         conn.close()
     except Exception as e:
