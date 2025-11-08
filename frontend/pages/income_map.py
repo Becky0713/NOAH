@@ -34,21 +34,21 @@ def get_db_connection():
 def get_geo_coordinates_from_db(geo_ids):
     """Get latitude and longitude for given geo_ids from database"""
     try:
+        if not geo_ids:
+            return pd.DataFrame()
+
         conn = get_db_connection()
-        
-        # Query rent_burden table to find matching geo_ids
-        # Format: Convert 1400000US to match 0600000US if needed
-        geo_id_list = "', '".join(geo_ids)
-        
-        # Try to match geo_ids - might need to adjust format
-        query = f"""
-        SELECT DISTINCT geo_id, latitude, longitude, tract_name
-        FROM rent_burden
-        WHERE geo_id IN ('{geo_id_list}')
-        OR geo_id IN (SELECT REPLACE(geo_id, '0600000US', '1400000US') FROM rent_burden WHERE geo_id LIKE '0600000US%')
+
+        query = """
+        SELECT DISTINCT rb.geo_id, rb.latitude, rb.longitude, rb.tract_name
+        FROM rent_burden rb
+        WHERE rb.geo_id = ANY(%s::text[])
+           OR REPLACE(rb.geo_id, '0600000US', '1400000US') = ANY(%s::text[])
         """
-        
-        df = pd.read_sql_query(query, conn)
+
+        geo_ids_clean = [str(gid).strip() for gid in geo_ids if isinstance(gid, str) and gid.strip()]
+
+        df = pd.read_sql_query(query, conn, params=(geo_ids_clean, geo_ids_clean))
         conn.close()
         return df
     except Exception as e:
