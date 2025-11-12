@@ -16,35 +16,103 @@ import time
 # Backend URL
 BACKEND_URL = "https://nyc-housing-backend.onrender.com"
 
-# Zillow ZORI (Zip-level rent index) CSV
-ZILLOW_ZORI_URL = "https://files.zillowstatic.com/research/public_csvs/zori/Zip_ZORI_AllHomesPlusMultifamily_SSA.csv"
+# Zillow ZORI data URLs
+ZILLOW_ZIP_URL = "https://files.zillowstatic.com/research/public_csvs/zori/Zip_ZORI_AllHomesPlusMultifamily_SSA.csv"
+ZILLOW_METRO_URL = "https://files.zillowstatic.com/research/public_csvs/zori/Metro_ZORI_AllHomesPlusMultifamily_SSA.csv"
+ZILLOW_CITY_URL = "https://files.zillowstatic.com/research/public_csvs/zori/City_ZORI_AllHomesPlusMultifamily_SSA.csv"
+
+def normalize_borough_name(borough):
+    """Normalize borough name for matching"""
+    if not borough:
+        return None
+    borough_lower = str(borough).lower().strip()
+    # Map variations to standard names
+    borough_map = {
+        'manhattan': 'Manhattan',
+        'new york': 'Manhattan',
+        'new york county': 'Manhattan',
+        'brooklyn': 'Brooklyn',
+        'kings': 'Brooklyn',
+        'kings county': 'Brooklyn',
+        'queens': 'Queens',
+        'queens county': 'Queens',
+        'bronx': 'Bronx',
+        'bronx county': 'Bronx',
+        'staten island': 'Staten Island',
+        'richmond': 'Staten Island',
+        'richmond county': 'Staten Island'
+    }
+    return borough_map.get(borough_lower, borough)
 
 @st.cache_data(show_spinner=False, ttl=86400)
 def fetch_zillow_rent_data():
-    """Fetch the latest Zillow ZIP-level rent data for New York State."""
+    """Fetch Zillow rent data - try ZIP level first, then Metro/City level by borough"""
+    zillow_zip_df = None
+    zillow_borough_df = None
+    latest_month = None
+    
+    # Try ZIP-level data first
     try:
-        zillow_df = pd.read_csv(ZILLOW_ZORI_URL)
-        # Keep only New York State ZIP codes
+        zillow_df = pd.read_csv(ZILLOW_ZIP_URL)
         zillow_df = zillow_df[zillow_df["StateName"] == "NY"].copy()
-        if zillow_df.empty:
-            return pd.DataFrame(columns=["zipcode", "average_rent"]), None
-
-        latest_month = zillow_df.columns[-1]
-
-        zillow_df = zillow_df[["RegionName", latest_month]].copy()
-        zillow_df.columns = ["zipcode", "average_rent"]
-
-        zillow_df["zipcode"] = zillow_df["zipcode"].astype(str).str.zfill(5)
-        zillow_df["average_rent"] = (
-            pd.to_numeric(zillow_df["average_rent"], errors="coerce")
-            .round()
-            .astype("Int64")
-        )
-
-        return zillow_df, latest_month
-    except Exception as exc:  # noqa: BLE001
-        st.warning(f"⚠️ Failed to fetch Zillow rent data: {str(exc)[:150]}")
-        return pd.DataFrame(columns=["zipcode", "average_rent"]), None
+        if not zillow_df.empty:
+            latest_month = zillow_df.columns[-1]
+            zillow_zip_df = zillow_df[["RegionName", latest_month]].copy()
+            zillow_zip_df.columns = ["zipcode", "average_rent"]
+            zillow_zip_df["zipcode"] = zillow_zip_df["zipcode"].astype(str).str.zfill(5)
+            zillow_zip_df["average_rent"] = (
+                pd.to_numeric(zillow_zip_df["average_rent"], errors="coerce")
+                .round()
+                .astype("Int64")
+            )
+    except Exception:  # noqa: BLE001
+        pass
+    
+    # Try Metro/City-level data for borough matching
+    for url, level in [(ZILLOW_METRO_URL, "Metro"), (ZILLOW_CITY_URL, "City")]:
+        try:
+            zillow_df = pd.read_csv(url)
+            # Filter for NYC area (MetroName or CityName contains "New York")
+            if "MetroName" in zillow_df.columns:
+                zillow_df = zillow_df[zillow_df["MetroName"].str.contains("New York", case=False, na=False)].copy()
+            elif "CityName" in zillow_df.columns:
+                zillow_df = zillow_df[zillow_df["CityName"].str.contains("New York", case=False, na=False)].copy()
+            elif "RegionName" in zillow_df.columns:
+                zillow_df = zillow_df[zillow_df["RegionName"].str.contains("New York", case=False, na=False)].copy()
+            
+            if not zillow_df.empty:
+                if latest_month is None:
+                    latest_month = zillow_df.columns[-1]
+                
+                # Extract borough/area name and rent
+                if "RegionName" in zillow_df.columns:
+                    zillow_borough_df = zillow_df[["RegionName", latest_month]].copy()
+                    zillow_borough_df.columns = ["area_name", "average_rent"]
+                elif "MetroName" in zillow_df.columns:
+                    zillow_borough_df = zillow_df[["MetroName", latest_month]].copy()
+                    zillow_borough_df.columns = ["area_name", "average_rent"]
+                elif "CityName" in zillow_df.columns:
+                    zillow_borough_df = zillow_df[["CityName", latest_month]].copy()
+                    zillow_borough_df.columns = ["area_name", "average_rent"]
+                
+                zillow_borough_df["average_rent"] = (
+                    pd.to_numeric(zillow_borough_df["average_rent"], errors="coerce")
+                    .round()
+                    .astype("Int64")
+                )
+                
+                # Try to extract borough from area name
+                zillow_borough_df["borough"] = zillow_borough_df["area_name"].apply(
+                    lambda x: normalize_borough_name(str(x)) if pd.notna(x) else None
+                )
+                
+                # If we got borough data, break
+                if zillow_borough_df["borough"].notna().any():
+                    break
+        except Exception:  # noqa: BLE001
+            continue
+    
+    return zillow_zip_df, zillow_borough_df, latest_month
 
 # Load glossary data
 @st.cache_data
@@ -960,8 +1028,8 @@ def main():
                         # Fill NaN values
                         df[col] = df[col].fillna('')
 
-                # Merge Zillow rent data by ZIP code (postcode)
-                zillow_df, zillow_latest_month = fetch_zillow_rent_data()
+                # Merge Zillow rent data - try ZIP code first, then borough
+                zillow_zip_df, zillow_borough_df, zillow_latest_month = fetch_zillow_rent_data()
 
                 if zillow_latest_month:
                     try:
@@ -974,14 +1042,37 @@ def main():
                     st.session_state["zillow_latest_month"] = None
                     st.session_state["zillow_latest_month_label"] = None
 
-                if not zillow_df.empty:
+                # Initialize average_rent column
+                df['average_rent'] = pd.Series([pd.NA] * len(df), dtype='Int64')
+                
+                # Try ZIP code matching first
+                if zillow_zip_df is not None and not zillow_zip_df.empty:
                     df['postcode_clean'] = df['postcode'].astype(str).str.extract(r'(\d{5})', expand=False)
-                    df = df.merge(zillow_df, how='left', left_on='postcode_clean', right_on='zipcode')
-                    df.drop(columns=['zipcode', 'postcode_clean'], inplace=True)
-                    if 'average_rent' in df.columns:
-                        df['average_rent'] = df['average_rent'].astype('Int64')
-                else:
-                    df['average_rent'] = pd.Series([pd.NA] * len(df), dtype='Int64')
+                    df_zip_merged = df.merge(zillow_zip_df, how='left', left_on='postcode_clean', right_on='zipcode')
+                    # Update average_rent where we got matches
+                    mask = df_zip_merged['average_rent_y'].notna()
+                    df.loc[mask, 'average_rent'] = df_zip_merged.loc[mask, 'average_rent_y']
+                    df.drop(columns=['postcode_clean'], inplace=True, errors='ignore')
+                
+                # Fill in missing values using borough matching
+                if zillow_borough_df is not None and not zillow_borough_df.empty:
+                    # Normalize borough names in main dataframe
+                    df['borough_normalized'] = df['borough'].apply(normalize_borough_name)
+                    
+                    # Merge by borough
+                    df_borough_merged = df.merge(
+                        zillow_borough_df[['borough', 'average_rent']].dropna(subset=['borough']),
+                        how='left',
+                        left_on='borough_normalized',
+                        right_on='borough',
+                        suffixes=('', '_borough')
+                    )
+                    
+                    # Fill in average_rent where it's still missing
+                    mask = df['average_rent'].isna() & df_borough_merged['average_rent_borough'].notna()
+                    df.loc[mask, 'average_rent'] = df_borough_merged.loc[mask, 'average_rent_borough']
+                    
+                    df.drop(columns=['borough_normalized'], inplace=True, errors='ignore')
                 
                 # Merge rent burden data by ZIP code
                 rent_burden_df = fetch_zip_rent_burden_data()
