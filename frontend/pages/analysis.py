@@ -445,9 +445,15 @@ def render_map_visualization(df, value_col, title, reverse_color=False, location
                 pickable=True,
             )
             
-            location_display = map_df.get('area_name', map_df.get(location_col, 'N/A'))
+            # Ensure tooltip fields exist
+            if 'area_name' not in map_df.columns:
+                if location_col in map_df.columns:
+                    map_df['area_name'] = map_df[location_col]
+                else:
+                    map_df['area_name'] = 'N/A'
+            
             tooltip = {
-                "html": f"<b>Location:</b> {{{{area_name}}}}<br/><b>{title}:</b> {{{{value_display}}}}",
+                "html": "<b>Location:</b> {area_name}<br/><b>" + title + ":</b> {value_display}",
                 "style": {"backgroundColor": "#262730", "color": "white"},
             }
             
