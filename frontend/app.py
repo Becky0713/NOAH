@@ -44,75 +44,112 @@ def normalize_borough_name(borough):
     }
     return borough_map.get(borough_lower, borough)
 
-@st.cache_data(show_spinner=False, ttl=86400)
-def fetch_zillow_rent_data():
-    """Fetch Zillow rent data - try ZIP level first, then Metro/City level by borough"""
-    zillow_zip_df = None
-    zillow_borough_df = None
-    latest_month = None
-    
-    # Try ZIP-level data first
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_market_median_rent_data():
+    """Fetch market median rent data from noah_streeteasy_medianrent_2025_10 table"""
     try:
-        zillow_df = pd.read_csv(ZILLOW_ZIP_URL)
-        zillow_df = zillow_df[zillow_df["StateName"] == "NY"].copy()
-        if not zillow_df.empty:
-            latest_month = zillow_df.columns[-1]
-            zillow_zip_df = zillow_df[["RegionName", latest_month]].copy()
-            zillow_zip_df.columns = ["zipcode", "average_rent"]
-            zillow_zip_df["zipcode"] = zillow_zip_df["zipcode"].astype(str).str.zfill(5)
-            zillow_zip_df["average_rent"] = (
-                pd.to_numeric(zillow_zip_df["average_rent"], errors="coerce")
-                .round()
-                .astype("Int64")
-            )
-    except Exception:  # noqa: BLE001
-        pass
-    
-    # Try Metro/City-level data for borough matching
-    for url, level in [(ZILLOW_METRO_URL, "Metro"), (ZILLOW_CITY_URL, "City")]:
-        try:
-            zillow_df = pd.read_csv(url)
-            # Filter for NYC area (MetroName or CityName contains "New York")
-            if "MetroName" in zillow_df.columns:
-                zillow_df = zillow_df[zillow_df["MetroName"].str.contains("New York", case=False, na=False)].copy()
-            elif "CityName" in zillow_df.columns:
-                zillow_df = zillow_df[zillow_df["CityName"].str.contains("New York", case=False, na=False)].copy()
-            elif "RegionName" in zillow_df.columns:
-                zillow_df = zillow_df[zillow_df["RegionName"].str.contains("New York", case=False, na=False)].copy()
-            
-            if not zillow_df.empty:
-                if latest_month is None:
-                    latest_month = zillow_df.columns[-1]
-                
-                # Extract borough/area name and rent
-                if "RegionName" in zillow_df.columns:
-                    zillow_borough_df = zillow_df[["RegionName", latest_month]].copy()
-                    zillow_borough_df.columns = ["area_name", "average_rent"]
-                elif "MetroName" in zillow_df.columns:
-                    zillow_borough_df = zillow_df[["MetroName", latest_month]].copy()
-                    zillow_borough_df.columns = ["area_name", "average_rent"]
-                elif "CityName" in zillow_df.columns:
-                    zillow_borough_df = zillow_df[["CityName", latest_month]].copy()
-                    zillow_borough_df.columns = ["area_name", "average_rent"]
-                
-                zillow_borough_df["average_rent"] = (
-                    pd.to_numeric(zillow_borough_df["average_rent"], errors="coerce")
-                    .round()
-                    .astype("Int64")
-                )
-                
-                # Try to extract borough from area name
-                zillow_borough_df["borough"] = zillow_borough_df["area_name"].apply(
-                    lambda x: normalize_borough_name(str(x)) if pd.notna(x) else None
-                )
-                
-                # If we got borough data, break
-                if zillow_borough_df["borough"].notna().any():
+        conn = get_db_connection()
+        
+        # Get column names first
+        column_query = """
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = 'noah_streeteasy_medianrent_2025_10'
+        ORDER BY ordinal_position;
+        """
+        columns_df = pd.read_sql_query(column_query, conn)
+        
+        if columns_df.empty:
+            conn.close()
+            return pd.DataFrame(), None
+        
+        column_names = columns_df['column_name'].tolist()
+        
+        # Find rent column (could be median_rent, rent, median_rent_price, etc.)
+        rent_col = None
+        for col in ['median_rent', 'rent', 'median_rent_price', 'average_rent', 'rent_price']:
+            if col in column_names:
+                rent_col = col
+                break
+        
+        if not rent_col:
+            # Try to find any column with 'rent' in name
+            for col in column_names:
+                if 'rent' in col.lower():
+                    rent_col = col
                     break
-        except Exception:  # noqa: BLE001
-            continue
-    
-    return zillow_zip_df, zillow_borough_df, latest_month
+        
+        if not rent_col:
+            conn.close()
+            st.warning("⚠️ Could not find rent column in noah_streeteasy_medianrent_2025_10 table")
+            return pd.DataFrame(), None
+        
+        # Find location columns (zipcode, borough, area_name, etc.)
+        zip_col = None
+        borough_col = None
+        area_col = None
+        
+        for col in ['zipcode', 'zip_code', 'postcode', 'postal_code', 'zip', 'zcta']:
+            if col in column_names:
+                zip_col = col
+                break
+        
+        for col in ['borough', 'borough_name', 'county', 'county_name']:
+            if col in column_names:
+                borough_col = col
+                break
+        
+        for col in ['area_name', 'area', 'region', 'region_name', 'neighborhood']:
+            if col in column_names:
+                area_col = col
+                break
+        
+        # Build query
+        select_cols = [rent_col]
+        if zip_col:
+            select_cols.append(zip_col)
+        if borough_col:
+            select_cols.append(borough_col)
+        if area_col:
+            select_cols.append(area_col)
+        
+        select_str = ", ".join([f'"{col}"' for col in select_cols])
+        
+        query = f"""
+        SELECT {select_str}
+        FROM noah_streeteasy_medianrent_2025_10
+        WHERE "{rent_col}" IS NOT NULL
+        """
+        
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        if df.empty:
+            return pd.DataFrame(), None
+        
+        # Rename rent column to standard name
+        df = df.rename(columns={rent_col: 'market_median_rent'})
+        
+        # Clean and prepare data
+        df['market_median_rent'] = (
+            pd.to_numeric(df['market_median_rent'], errors="coerce")
+            .round()
+            .astype("Int64")
+        )
+        df = df[df['market_median_rent'].notna()]
+        
+        # Prepare for matching
+        if zip_col:
+            df['zipcode'] = df[zip_col].astype(str).str.extract(r'(\d{5})', expand=False)
+            df = df[df['zipcode'].notna()]
+        
+        if borough_col:
+            df['borough'] = df[borough_col].apply(normalize_borough_name)
+        
+        return df, "2025-10"
+    except Exception as e:
+        st.warning(f"⚠️ Could not fetch market median rent data: {str(e)[:200]}")
+        return pd.DataFrame(), None
 
 # Load glossary data
 @st.cache_data
@@ -502,7 +539,7 @@ def render_map(data: pd.DataFrame):
     df_geo["color"] = [[0, 100, 200, 140]] * len(df_geo)  # Blue color for all points
     
     # Ensure all tooltip fields are strings (PyDeck requires strings for tooltips)
-    tooltip_fields = ['project_id', 'borough', 'postcode', 'average_rent_display', 
+    tooltip_fields = ['project_id', 'borough', 'postcode', 'market_median_rent_display', 'average_rent_display',
                       'rent_burden_display', 'severe_burden_display', 'building_completion_display',
                       'extremely_low_income_units', 'very_low_income_units', 'low_income_units',
                       'studio_units', '_1_br_units', '_2_br_units', 'counted_rental_units']
@@ -540,12 +577,21 @@ def render_map(data: pd.DataFrame):
         df_geo['postcode'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
     df_geo['postcode'] = df_geo['postcode'].fillna('').astype(str)
 
-    # Prepare Zillow average rent display
-    if 'average_rent' not in df_geo.columns:
-        df_geo['average_rent'] = pd.Series([pd.NA] * len(df_geo), index=df_geo.index)
-    df_geo['average_rent_display'] = df_geo['average_rent'].apply(
-        lambda x: f"${int(x):,}" if pd.notna(x) else "N/A"
-    )
+    # Prepare Market Median Rent display (prefer market_median_rent over average_rent)
+    if 'market_median_rent' in df_geo.columns:
+        df_geo['market_median_rent_display'] = df_geo['market_median_rent'].apply(
+            lambda x: f"${int(x):,}" if pd.notna(x) else "N/A"
+        )
+    elif 'average_rent' in df_geo.columns:
+        df_geo['market_median_rent_display'] = df_geo['average_rent'].apply(
+            lambda x: f"${int(x):,}" if pd.notna(x) else "N/A"
+        )
+    else:
+        df_geo['market_median_rent_display'] = pd.Series(['N/A'] * len(df_geo), dtype=str, index=df_geo.index)
+    
+    # Keep average_rent_display for backward compatibility
+    if 'average_rent_display' not in df_geo.columns:
+        df_geo['average_rent_display'] = df_geo['market_median_rent_display']
     
     # Use building_completion_date if available, otherwise fall back to project_completion_date
     # Check if building_completion_display already exists (from data processing)
@@ -608,7 +654,7 @@ def render_map(data: pd.DataFrame):
         <b>Project ID: {project_id}</b><br/>
         Borough: {borough}<br/>
         Postcode: {postcode}<br/>
-        Average Rent (Zillow): {average_rent_display}<br/>
+        Market Median Rent: {market_median_rent_display}<br/>
         Rent Burden Rate: {rent_burden_display}<br/>
         Severe Burden Rate: {severe_burden_display}<br/>
         Building Completion: {building_completion_display}<br/>
@@ -794,19 +840,20 @@ def render_info_card_section():
         st.write(f"**Borough:** {get_val('borough', get_val('region'))}")
         st.write(f"**Postcode:** {get_val('postcode')}")
 
-        avg_rent_val = project.get('average_rent', None)
+        # Prefer market_median_rent over average_rent
+        rent_val = project.get('market_median_rent', project.get('average_rent', None))
         rent_display = 'N/A'
-        if avg_rent_val is not None and avg_rent_val != 'N/A' and not pd.isna(avg_rent_val):
+        if rent_val is not None and rent_val != 'N/A' and not pd.isna(rent_val):
             try:
-                rent_display = f"${int(float(avg_rent_val)):,}"
+                rent_display = f"${int(float(rent_val)):,}"
             except (ValueError, TypeError):  # noqa: BLE001
                 rent_display = 'N/A'
 
-        zillow_label = st.session_state.get('zillow_latest_month_label') or st.session_state.get('zillow_latest_month')
-        if zillow_label:
-            st.write(f"**Average Rent (Zillow ZORI {zillow_label}):** {rent_display}")
+        market_rent_label = st.session_state.get('market_rent_month_label') or st.session_state.get('market_rent_month')
+        if market_rent_label:
+            st.write(f"**Market Median Rent ({market_rent_label}):** {rent_display}")
         else:
-            st.write(f"**Average Rent (Zillow ZORI):** {rent_display}")
+            st.write(f"**Market Median Rent:** {rent_display}")
         
         # Rent Burden information
         rent_burden_val = project.get('rent_burden_rate', None)
@@ -1028,51 +1075,75 @@ def main():
                         # Fill NaN values
                         df[col] = df[col].fillna('')
 
-                # Merge Zillow rent data - try ZIP code first, then borough
-                zillow_zip_df, zillow_borough_df, zillow_latest_month = fetch_zillow_rent_data()
+                # Merge Market Median Rent data - try ZIP code first, then borough
+                market_rent_df, rent_data_month = fetch_market_median_rent_data()
 
-                if zillow_latest_month:
+                if rent_data_month:
                     try:
-                        month_label = pd.to_datetime(zillow_latest_month).strftime("%b %Y")
+                        month_label = pd.to_datetime(rent_data_month).strftime("%b %Y")
                     except Exception:  # noqa: BLE001
-                        month_label = zillow_latest_month
-                    st.session_state["zillow_latest_month"] = zillow_latest_month
-                    st.session_state["zillow_latest_month_label"] = month_label
+                        month_label = rent_data_month
+                    st.session_state["market_rent_month"] = rent_data_month
+                    st.session_state["market_rent_month_label"] = month_label
                 else:
-                    st.session_state["zillow_latest_month"] = None
-                    st.session_state["zillow_latest_month_label"] = None
+                    st.session_state["market_rent_month"] = None
+                    st.session_state["market_rent_month_label"] = None
 
-                # Initialize average_rent column
-                df['average_rent'] = pd.Series([pd.NA] * len(df), dtype='Int64')
+                # Initialize market_median_rent column (replacing average_rent)
+                df['market_median_rent'] = pd.Series([pd.NA] * len(df), dtype='Int64')
                 
-                # Try ZIP code matching first
-                if zillow_zip_df is not None and not zillow_zip_df.empty:
-                    df['postcode_clean'] = df['postcode'].astype(str).str.extract(r'(\d{5})', expand=False)
-                    df_zip_merged = df.merge(zillow_zip_df, how='left', left_on='postcode_clean', right_on='zipcode')
-                    # Update average_rent where we got matches
-                    mask = df_zip_merged['average_rent_y'].notna()
-                    df.loc[mask, 'average_rent'] = df_zip_merged.loc[mask, 'average_rent_y']
-                    df.drop(columns=['postcode_clean'], inplace=True, errors='ignore')
+                if market_rent_df is not None and not market_rent_df.empty:
+                    # Try ZIP code matching first
+                    if 'zipcode' in market_rent_df.columns:
+                        df['postcode_clean'] = df['postcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                        df_zip_merged = df.merge(
+                            market_rent_df[['zipcode', 'market_median_rent']].dropna(subset=['zipcode']),
+                            how='left',
+                            left_on='postcode_clean',
+                            right_on='zipcode',
+                            suffixes=('', '_market')
+                        )
+                        # Update market_median_rent where we got matches
+                        mask = df_zip_merged['market_median_rent_market'].notna()
+                        df.loc[mask, 'market_median_rent'] = df_zip_merged.loc[mask, 'market_median_rent_market']
+                        df.drop(columns=['postcode_clean'], inplace=True, errors='ignore')
+                    
+                    # Fill in missing values using borough matching
+                    if 'borough' in market_rent_df.columns:
+                        # Normalize borough names in main dataframe
+                        df['borough_normalized'] = df['borough'].apply(normalize_borough_name)
+                        
+                        # Merge by borough
+                        df_borough_merged = df.merge(
+                            market_rent_df[['borough', 'market_median_rent']].dropna(subset=['borough']),
+                            how='left',
+                            left_on='borough_normalized',
+                            right_on='borough',
+                            suffixes=('', '_borough')
+                        )
+                        
+                        # Fill in market_median_rent where it's still missing
+                        mask = df['market_median_rent'].isna() & df_borough_merged['market_median_rent_borough'].notna()
+                        df.loc[mask, 'market_median_rent'] = df_borough_merged.loc[mask, 'market_median_rent_borough']
+                        
+                        df.drop(columns=['borough_normalized'], inplace=True, errors='ignore')
+                    
+                    # Show match results
+                    matched_count = df['market_median_rent'].notna().sum()
+                    if matched_count > 0:
+                        st.success(f"✅ Matched market median rent data for {matched_count} projects")
+                    else:
+                        st.warning("⚠️ Market median rent data loaded but no matches found. Check zip code/borough format.")
+                else:
+                    st.warning("⚠️ No market median rent data found in database. Check if `noah_streeteasy_medianrent_2025_10` table exists.")
                 
-                # Fill in missing values using borough matching
-                if zillow_borough_df is not None and not zillow_borough_df.empty:
-                    # Normalize borough names in main dataframe
-                    df['borough_normalized'] = df['borough'].apply(normalize_borough_name)
-                    
-                    # Merge by borough
-                    df_borough_merged = df.merge(
-                        zillow_borough_df[['borough', 'average_rent']].dropna(subset=['borough']),
-                        how='left',
-                        left_on='borough_normalized',
-                        right_on='borough',
-                        suffixes=('', '_borough')
-                    )
-                    
-                    # Fill in average_rent where it's still missing
-                    mask = df['average_rent'].isna() & df_borough_merged['average_rent_borough'].notna()
-                    df.loc[mask, 'average_rent'] = df_borough_merged.loc[mask, 'average_rent_borough']
-                    
-                    df.drop(columns=['borough_normalized'], inplace=True, errors='ignore')
+                # Keep average_rent for backward compatibility (use market_median_rent if available)
+                if 'average_rent' not in df.columns:
+                    df['average_rent'] = df['market_median_rent']
+                else:
+                    # Fill missing average_rent with market_median_rent
+                    mask = df['average_rent'].isna() & df['market_median_rent'].notna()
+                    df.loc[mask, 'average_rent'] = df.loc[mask, 'market_median_rent']
                 
                 # Merge rent burden data by ZIP code
                 rent_burden_df = fetch_zip_rent_burden_data()
