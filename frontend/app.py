@@ -234,13 +234,23 @@ def fetch_zip_rent_burden_data():
         # Find rent burden columns
         rent_burden_cols = []
         for col in column_names:
-            if 'rent' in col.lower() and 'burden' in col.lower():
+            col_lower = col.lower()
+            if ('rent' in col_lower and 'burden' in col_lower) or ('rent' in col_lower and 'cost' in col_lower):
                 rent_burden_cols.append(col)
         
         if not rent_burden_cols:
             # Try alternative names
             for col in column_names:
-                if 'burden' in col.lower() or 'cost' in col.lower():
+                col_lower = col.lower()
+                if 'burden' in col_lower or ('cost' in col_lower and 'burden' in col_lower):
+                    rent_burden_cols.append(col)
+        
+        # If still no columns found, show all columns for debugging
+        if not rent_burden_cols:
+            st.warning(f"⚠️ Could not find rent burden columns. Available columns: {', '.join(column_names)}")
+            # Try to use any column that might be rent burden related
+            for col in column_names:
+                if any(keyword in col.lower() for keyword in ['rate', 'percent', 'pct', '%']):
                     rent_burden_cols.append(col)
         
         # Build query - select zip code and rent burden columns
@@ -262,6 +272,23 @@ def fetch_zip_rent_burden_data():
         # Clean zipcode - extract 5-digit zip
         df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
         df = df[df['zipcode'].notna()]
+        
+        # Rename rent burden columns to standard names if needed
+        # Look for columns that should be renamed to rent_burden_rate and severe_burden_rate
+        for col in df.columns:
+            col_lower = col.lower()
+            if col != 'zipcode':
+                if 'severe' in col_lower or '50' in col_lower:
+                    if 'rent_burden_rate' not in df.columns or 'severe_burden_rate' not in df.columns:
+                        df = df.rename(columns={col: 'severe_burden_rate'})
+                elif 'rent_burden_rate' not in df.columns:
+                    df = df.rename(columns={col: 'rent_burden_rate'})
+        
+        # Debug info
+        if st.session_state.get('show_rent_burden_debug', False):
+            st.write(f"**Rent burden data loaded:** {len(df)} rows")
+            st.write(f"**Columns:** {list(df.columns)}")
+            st.write(f"**Sample zipcodes:** {df['zipcode'].head(5).tolist()}")
         
         return df
     except Exception as e:
@@ -475,17 +502,17 @@ def render_map(data: pd.DataFrame):
     # Prepare rent burden display for tooltip
     if 'rent_burden_rate' in df_geo.columns:
         df_geo['rent_burden_display'] = df_geo['rent_burden_rate'].apply(
-            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' else "N/A"
+            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' and str(x).strip() != '' else "N/A"
         )
     else:
-        df_geo['rent_burden_display'] = "N/A"
+        df_geo['rent_burden_display'] = pd.Series(['N/A'] * len(df_geo), index=df_geo.index)
     
     if 'severe_burden_rate' in df_geo.columns:
         df_geo['severe_burden_display'] = df_geo['severe_burden_rate'].apply(
-            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' else "N/A"
+            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' and str(x).strip() != '' else "N/A"
         )
     else:
-        df_geo['severe_burden_display'] = "N/A"
+        df_geo['severe_burden_display'] = pd.Series(['N/A'] * len(df_geo), index=df_geo.index)
     
     # PyDeck uses {field_name} for variables in tooltip
     tooltip = {
@@ -942,6 +969,15 @@ def main():
                     df['postcode_clean'] = df['postcode'].astype(str).str.extract(r'(\d{5})', expand=False)
                     df = df.merge(rent_burden_df, how='left', left_on='postcode_clean', right_on='zipcode')
                     df.drop(columns=['zipcode', 'postcode_clean'], inplace=True, errors='ignore')
+                    
+                    # Debug: show merge results
+                    matched_count = df[df['rent_burden_rate'].notna()].shape[0] if 'rent_burden_rate' in df.columns else 0
+                    if matched_count > 0:
+                        st.success(f"✅ Matched rent burden data for {matched_count} projects")
+                    else:
+                        st.warning(f"⚠️ Rent burden data loaded but no matches found. Check zip code format in both datasets.")
+                else:
+                    st.warning("⚠️ No rent burden data found in database. Check if `noah_zip_rentburden` table exists.")
                 
                 # Handle building_completion_date with fallback to project_completion_date
                 if 'building_completion_date' not in df.columns:
