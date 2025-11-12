@@ -539,8 +539,7 @@ def render_map(data: pd.DataFrame):
     df_geo["color"] = [[0, 100, 200, 140]] * len(df_geo)  # Blue color for all points
     
     # Ensure all tooltip fields are strings (PyDeck requires strings for tooltips)
-    tooltip_fields = ['project_id', 'borough', 'postcode', 'market_median_rent_display', 'average_rent_display',
-                      'rent_burden_display', 'severe_burden_display', 'building_completion_display',
+    tooltip_fields = ['project_id', 'borough', 'postcode', 'building_completion_display',
                       'extremely_low_income_units', 'very_low_income_units', 'low_income_units',
                       'studio_units', '_1_br_units', '_2_br_units', 'counted_rental_units']
     for field in tooltip_fields:
@@ -577,21 +576,7 @@ def render_map(data: pd.DataFrame):
         df_geo['postcode'] = pd.Series([''] * len(df_geo), dtype=str, index=df_geo.index)
     df_geo['postcode'] = df_geo['postcode'].fillna('').astype(str)
 
-    # Prepare Market Median Rent display (prefer market_median_rent over average_rent)
-    if 'market_median_rent' in df_geo.columns:
-        df_geo['market_median_rent_display'] = df_geo['market_median_rent'].apply(
-            lambda x: f"${int(x):,}" if pd.notna(x) else "N/A"
-        )
-    elif 'average_rent' in df_geo.columns:
-        df_geo['market_median_rent_display'] = df_geo['average_rent'].apply(
-            lambda x: f"${int(x):,}" if pd.notna(x) else "N/A"
-        )
-    else:
-        df_geo['market_median_rent_display'] = pd.Series(['N/A'] * len(df_geo), dtype=str, index=df_geo.index)
-    
-    # Keep average_rent_display for backward compatibility
-    if 'average_rent_display' not in df_geo.columns:
-        df_geo['average_rent_display'] = df_geo['market_median_rent_display']
+    # Market median rent data is still loaded but not displayed in tooltip
     
     # Use building_completion_date if available, otherwise fall back to project_completion_date
     # Check if building_completion_display already exists (from data processing)
@@ -622,31 +607,7 @@ def render_map(data: pd.DataFrame):
         else:
             df_geo[field] = pd.to_numeric(df_geo[field], errors='coerce').fillna(0).astype(int)
     
-    # Prepare rent burden display for tooltip
-    # Check if rent burden columns exist
-    if 'rent_burden_rate' in df_geo.columns:
-        df_geo['rent_burden_display'] = df_geo['rent_burden_rate'].apply(
-            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' and str(x).strip() != '' and str(x).strip() != 'nan' else "N/A"
-        )
-    else:
-        # Create column with N/A values
-        df_geo['rent_burden_display'] = pd.Series(['N/A'] * len(df_geo), dtype=str, index=df_geo.index)
-    
-    if 'severe_burden_rate' in df_geo.columns:
-        df_geo['severe_burden_display'] = df_geo['severe_burden_rate'].apply(
-            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' and str(x).strip() != '' and str(x).strip() != 'nan' else "N/A"
-        )
-    else:
-        # Create column with N/A values
-        df_geo['severe_burden_display'] = pd.Series(['N/A'] * len(df_geo), dtype=str, index=df_geo.index)
-    
-    # Debug: check if columns exist
-    if st.session_state.get('show_rent_burden_debug', False):
-        st.write(f"**Rent burden columns in df_geo:** {[col for col in df_geo.columns if 'burden' in col.lower()]}")
-        if 'rent_burden_rate' in df_geo.columns:
-            st.write(f"**Sample rent_burden_rate values:** {df_geo['rent_burden_rate'].head(3).tolist()}")
-        if 'rent_burden_display' in df_geo.columns:
-            st.write(f"**Sample rent_burden_display values:** {df_geo['rent_burden_display'].head(3).tolist()}")
+    # Rent burden and market rent data are still loaded but not displayed in tooltip/info card
     
     # PyDeck uses {field_name} for variables in tooltip
     tooltip = {
@@ -654,9 +615,6 @@ def render_map(data: pd.DataFrame):
         <b>Project ID: {project_id}</b><br/>
         Borough: {borough}<br/>
         Postcode: {postcode}<br/>
-        Market Median Rent: {market_median_rent_display}<br/>
-        Rent Burden Rate: {rent_burden_display}<br/>
-        Severe Burden Rate: {severe_burden_display}<br/>
         Building Completion: {building_completion_display}<br/>
         <br/>
         <b>Income-Restricted Units:</b><br/>
@@ -839,41 +797,6 @@ def render_info_card_section():
         st.write(f"**Project Name:** {get_val('project_name')}")
         st.write(f"**Borough:** {get_val('borough', get_val('region'))}")
         st.write(f"**Postcode:** {get_val('postcode')}")
-
-        # Prefer market_median_rent over average_rent
-        rent_val = project.get('market_median_rent', project.get('average_rent', None))
-        rent_display = 'N/A'
-        if rent_val is not None and rent_val != 'N/A' and not pd.isna(rent_val):
-            try:
-                rent_display = f"${int(float(rent_val)):,}"
-            except (ValueError, TypeError):  # noqa: BLE001
-                rent_display = 'N/A'
-
-        market_rent_label = st.session_state.get('market_rent_month_label') or st.session_state.get('market_rent_month')
-        if market_rent_label:
-            st.write(f"**Market Median Rent ({market_rent_label}):** {rent_display}")
-        else:
-            st.write(f"**Market Median Rent:** {rent_display}")
-        
-        # Rent Burden information
-        rent_burden_val = project.get('rent_burden_rate', None)
-        rent_burden_display = 'N/A'
-        if rent_burden_val is not None and rent_burden_val != 'N/A' and not pd.isna(rent_burden_val):
-            try:
-                rent_burden_display = f"{float(rent_burden_val):.1f}%"
-            except (ValueError, TypeError):  # noqa: BLE001
-                rent_burden_display = 'N/A'
-        st.write(f"**Rent Burden Rate:** {rent_burden_display}")
-        
-        severe_burden_val = project.get('severe_burden_rate', None)
-        severe_burden_display = 'N/A'
-        if severe_burden_val is not None and severe_burden_val != 'N/A' and not pd.isna(severe_burden_val):
-            try:
-                severe_burden_display = f"{float(severe_burden_val):.1f}%"
-            except (ValueError, TypeError):  # noqa: BLE001
-                severe_burden_display = 'N/A'
-        st.write(f"**Severe Burden Rate:** {severe_burden_display}")
-
         st.write(f"**Building ID:** {get_val('building_id')}")
         st.write(f"**BBL:** {get_val('bbl')}")
         st.write(f"**BIN:** {get_val('bin')}")
