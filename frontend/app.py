@@ -433,10 +433,19 @@ def render_map(data: pd.DataFrame):
     # Create a list of colors for each row
     df_geo["color"] = [[0, 100, 200, 140]] * len(df_geo)  # Blue color for all points
     
+    # Ensure all tooltip fields are strings (PyDeck requires strings for tooltips)
+    tooltip_fields = ['project_id', 'borough', 'postcode', 'average_rent_display', 
+                      'rent_burden_display', 'severe_burden_display', 'building_completion_display',
+                      'extremely_low_income_units', 'very_low_income_units', 'low_income_units',
+                      'studio_units', '_1_br_units', '_2_br_units', 'counted_rental_units']
+    for field in tooltip_fields:
+        if field in df_geo.columns:
+            df_geo[field] = df_geo[field].astype(str).fillna('N/A')
+    
     # Create PyDeck layer
     layer = pdk.Layer(
         "ScatterplotLayer",
-        data=df_geo,
+        data=df_geo.to_dict('records'),  # Convert to list of dicts for PyDeck
         get_position="[longitude, latitude]",
         get_radius="radius",
         radius_min_pixels=3,
@@ -500,19 +509,30 @@ def render_map(data: pd.DataFrame):
             df_geo[field] = pd.to_numeric(df_geo[field], errors='coerce').fillna(0).astype(int)
     
     # Prepare rent burden display for tooltip
+    # Check if rent burden columns exist
     if 'rent_burden_rate' in df_geo.columns:
         df_geo['rent_burden_display'] = df_geo['rent_burden_rate'].apply(
-            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' and str(x).strip() != '' else "N/A"
+            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' and str(x).strip() != '' and str(x).strip() != 'nan' else "N/A"
         )
     else:
-        df_geo['rent_burden_display'] = pd.Series(['N/A'] * len(df_geo), index=df_geo.index)
+        # Create column with N/A values
+        df_geo['rent_burden_display'] = pd.Series(['N/A'] * len(df_geo), dtype=str, index=df_geo.index)
     
     if 'severe_burden_rate' in df_geo.columns:
         df_geo['severe_burden_display'] = df_geo['severe_burden_rate'].apply(
-            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' and str(x).strip() != '' else "N/A"
+            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' and str(x).strip() != '' and str(x).strip() != 'nan' else "N/A"
         )
     else:
-        df_geo['severe_burden_display'] = pd.Series(['N/A'] * len(df_geo), index=df_geo.index)
+        # Create column with N/A values
+        df_geo['severe_burden_display'] = pd.Series(['N/A'] * len(df_geo), dtype=str, index=df_geo.index)
+    
+    # Debug: check if columns exist
+    if st.session_state.get('show_rent_burden_debug', False):
+        st.write(f"**Rent burden columns in df_geo:** {[col for col in df_geo.columns if 'burden' in col.lower()]}")
+        if 'rent_burden_rate' in df_geo.columns:
+            st.write(f"**Sample rent_burden_rate values:** {df_geo['rent_burden_rate'].head(3).tolist()}")
+        if 'rent_burden_display' in df_geo.columns:
+            st.write(f"**Sample rent_burden_display values:** {df_geo['rent_burden_display'].head(3).tolist()}")
     
     # PyDeck uses {field_name} for variables in tooltip
     tooltip = {
