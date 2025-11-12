@@ -171,6 +171,103 @@ def fetch_records_paginated(
     
     return all_records[:limit] if all_records else []  # Return exactly up to limit, or empty list
 
+def get_db_connection():
+    """Get database connection from Streamlit secrets"""
+    try:
+        import psycopg2
+        return psycopg2.connect(
+            host=st.secrets["secrets"]["db_host"],
+            port=int(st.secrets["secrets"]["db_port"]),
+            dbname=st.secrets["secrets"]["db_name"],
+            user=st.secrets["secrets"]["db_user"],
+            password=st.secrets["secrets"]["db_password"],
+            sslmode="require"
+        )
+    except KeyError as e:
+        st.error(f"❌ Missing secret: {e}")
+        st.stop()
+    except Exception as e:
+        st.error(f"❌ Database connection error: {e}")
+        st.stop()
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_zip_rent_burden_data():
+    """Fetch rent burden data by zip code from noah_zip_rentburden table"""
+    try:
+        conn = get_db_connection()
+        
+        # Try to find the zip code column (could be zipcode, zip_code, postcode, postal_code, etc.)
+        # First, get column names
+        column_query = """
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = 'noah_zip_rentburden'
+        ORDER BY ordinal_position;
+        """
+        columns_df = pd.read_sql_query(column_query, conn)
+        
+        if columns_df.empty:
+            conn.close()
+            return pd.DataFrame()
+        
+        column_names = columns_df['column_name'].tolist()
+        
+        # Find zip code column
+        zip_col = None
+        for col in ['zipcode', 'zip_code', 'postcode', 'postal_code', 'zip', 'zcta']:
+            if col in column_names:
+                zip_col = col
+                break
+        
+        if not zip_col:
+            # Try to find any column with 'zip' or 'post' in name
+            for col in column_names:
+                if 'zip' in col.lower() or 'post' in col.lower():
+                    zip_col = col
+                    break
+        
+        if not zip_col:
+            conn.close()
+            st.warning("⚠️ Could not find zip code column in noah_zip_rentburden table")
+            return pd.DataFrame()
+        
+        # Find rent burden columns
+        rent_burden_cols = []
+        for col in column_names:
+            if 'rent' in col.lower() and 'burden' in col.lower():
+                rent_burden_cols.append(col)
+        
+        if not rent_burden_cols:
+            # Try alternative names
+            for col in column_names:
+                if 'burden' in col.lower() or 'cost' in col.lower():
+                    rent_burden_cols.append(col)
+        
+        # Build query - select zip code and rent burden columns
+        select_cols = [zip_col] + rent_burden_cols
+        select_str = ", ".join([f'"{col}"' for col in select_cols])
+        
+        query = f"""
+        SELECT {select_str}
+        FROM noah_zip_rentburden
+        WHERE "{zip_col}" IS NOT NULL
+        """
+        
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        # Rename zip column to standard name for merging
+        df = df.rename(columns={zip_col: 'zipcode'})
+        
+        # Clean zipcode - extract 5-digit zip
+        df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+        df = df[df['zipcode'].notna()]
+        
+        return df
+    except Exception as e:
+        st.warning(f"⚠️ Could not fetch rent burden data: {str(e)[:200]}")
+        return pd.DataFrame()
+
 def fetch_median_income_data():
     """Fetch median household income data from database"""
     try:
@@ -375,6 +472,21 @@ def render_map(data: pd.DataFrame):
         else:
             df_geo[field] = pd.to_numeric(df_geo[field], errors='coerce').fillna(0).astype(int)
     
+    # Prepare rent burden display for tooltip
+    if 'rent_burden_rate' in df_geo.columns:
+        df_geo['rent_burden_display'] = df_geo['rent_burden_rate'].apply(
+            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' else "N/A"
+        )
+    else:
+        df_geo['rent_burden_display'] = "N/A"
+    
+    if 'severe_burden_rate' in df_geo.columns:
+        df_geo['severe_burden_display'] = df_geo['severe_burden_rate'].apply(
+            lambda x: f"{float(x):.1f}%" if pd.notna(x) and x != '' else "N/A"
+        )
+    else:
+        df_geo['severe_burden_display'] = "N/A"
+    
     # PyDeck uses {field_name} for variables in tooltip
     tooltip = {
         "html": """
@@ -382,6 +494,8 @@ def render_map(data: pd.DataFrame):
         Borough: {borough}<br/>
         Postcode: {postcode}<br/>
         Average Rent (Zillow): {average_rent_display}<br/>
+        Rent Burden Rate: {rent_burden_display}<br/>
+        Severe Burden Rate: {severe_burden_display}<br/>
         Building Completion: {building_completion_display}<br/>
         <br/>
         <b>Income-Restricted Units:</b><br/>
@@ -578,7 +692,26 @@ def render_info_card_section():
             st.write(f"**Average Rent (Zillow ZORI {zillow_label}):** {rent_display}")
         else:
             st.write(f"**Average Rent (Zillow ZORI):** {rent_display}")
- 
+        
+        # Rent Burden information
+        rent_burden_val = project.get('rent_burden_rate', None)
+        rent_burden_display = 'N/A'
+        if rent_burden_val is not None and rent_burden_val != 'N/A' and not pd.isna(rent_burden_val):
+            try:
+                rent_burden_display = f"{float(rent_burden_val):.1f}%"
+            except (ValueError, TypeError):  # noqa: BLE001
+                rent_burden_display = 'N/A'
+        st.write(f"**Rent Burden Rate:** {rent_burden_display}")
+        
+        severe_burden_val = project.get('severe_burden_rate', None)
+        severe_burden_display = 'N/A'
+        if severe_burden_val is not None and severe_burden_val != 'N/A' and not pd.isna(severe_burden_val):
+            try:
+                severe_burden_display = f"{float(severe_burden_val):.1f}%"
+            except (ValueError, TypeError):  # noqa: BLE001
+                severe_burden_display = 'N/A'
+        st.write(f"**Severe Burden Rate:** {severe_burden_display}")
+
         st.write(f"**Building ID:** {get_val('building_id')}")
         st.write(f"**BBL:** {get_val('bbl')}")
         st.write(f"**BIN:** {get_val('bin')}")
@@ -802,6 +935,13 @@ def main():
                         df['average_rent'] = df['average_rent'].astype('Int64')
                 else:
                     df['average_rent'] = pd.Series([pd.NA] * len(df), dtype='Int64')
+                
+                # Merge rent burden data by ZIP code
+                rent_burden_df = fetch_zip_rent_burden_data()
+                if not rent_burden_df.empty:
+                    df['postcode_clean'] = df['postcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                    df = df.merge(rent_burden_df, how='left', left_on='postcode_clean', right_on='zipcode')
+                    df.drop(columns=['zipcode', 'postcode_clean'], inplace=True, errors='ignore')
                 
                 # Handle building_completion_date with fallback to project_completion_date
                 if 'building_completion_date' not in df.columns:
