@@ -545,97 +545,147 @@ def render_analysis_page():
             if 'zipcode' in burden_df.columns:
                 burden_df = burden_df[burden_df['zipcode'].astype(str).str.contains(location_lower, case=False, na=False)]
     
-    # Show top 3 worst cases when map is not displayed
+    # Prepare ZIP-level data for Top 3 Critical Areas
+    def prepare_top3_critical_areas():
+        """Prepare top 3 ZIP codes for each critical metric"""
+        results = {
+            'lowest_income': [],
+            'highest_burden': [],
+            'highest_ratio': []
+        }
+        
+        # 1. Lowest Median Income (ZIP-level only)
+        if not income_df.empty and 'median_income' in income_df.columns and 'zipcode' in income_df.columns:
+            income_zip = income_df[['zipcode', 'median_income']].copy()
+            income_zip = income_zip[income_zip['zipcode'].notna() & income_zip['median_income'].notna()]
+            income_zip = income_zip[income_zip['zipcode'].astype(str).str.len() == 5]  # Ensure 5-digit ZIP
+            income_zip = income_zip.nsmallest(3, 'median_income')
+            
+            for _, row in income_zip.iterrows():
+                zipcode = str(row['zipcode']).strip()
+                income_val = float(row['median_income'])
+                results['lowest_income'].append({
+                    'zipcode': zipcode,
+                    'value': income_val,
+                    'display': f"ZIP {zipcode} — ${income_val:,.0f}"
+                })
+        
+        # Fill to 3 items if needed
+        while len(results['lowest_income']) < 3:
+            results['lowest_income'].append({
+                'zipcode': None,
+                'value': None,
+                'display': "Data unavailable"
+            })
+        
+        # 2. Highest Rent Burden (ZIP-level only)
+        if not burden_df.empty and 'rent_burden_rate' in burden_df.columns and 'zipcode' in burden_df.columns:
+            burden_zip = burden_df[['zipcode', 'rent_burden_rate']].copy()
+            burden_zip = burden_zip[burden_zip['zipcode'].notna() & burden_zip['rent_burden_rate'].notna()]
+            burden_zip = burden_zip[burden_zip['zipcode'].astype(str).str.len() == 5]  # Ensure 5-digit ZIP
+            # Convert to percentage if needed (check if already percentage or decimal)
+            burden_zip['rent_burden_rate'] = pd.to_numeric(burden_zip['rent_burden_rate'], errors='coerce')
+            # If values are < 1, they're likely decimals (0.5 = 50%), multiply by 100
+            if burden_zip['rent_burden_rate'].max() < 1:
+                burden_zip['rent_burden_rate'] = burden_zip['rent_burden_rate'] * 100
+            burden_zip = burden_zip.nlargest(3, 'rent_burden_rate')
+            
+            for _, row in burden_zip.iterrows():
+                zipcode = str(row['zipcode']).strip()
+                burden_val = float(row['rent_burden_rate'])
+                results['highest_burden'].append({
+                    'zipcode': zipcode,
+                    'value': burden_val,
+                    'display': f"ZIP {zipcode} — {burden_val:.0f}%"
+                })
+        
+        # Fill to 3 items if needed
+        while len(results['highest_burden']) < 3:
+            results['highest_burden'].append({
+                'zipcode': None,
+                'value': None,
+                'display': "Data unavailable"
+            })
+        
+        # 3. Highest Rent-to-Income Ratio (ZIP-level only)
+        # Need to merge rent and income data at ZIP level
+        if not rent_df.empty and not income_df.empty:
+            # Use default bedroom type (1BR) if "All" is selected, or use selected type
+            if bedroom_type != "All":
+                bed_col = f'rent_{bedroom_type.lower().replace("+", "")}'
+            else:
+                # Default to 1BR if "All" is selected
+                bed_col = 'rent_1br'
+            
+            if bed_col in rent_df.columns and 'zipcode' in rent_df.columns and 'zipcode' in income_df.columns:
+                # Prepare rent data (ZIP-level only)
+                rent_zip = rent_df[['zipcode', bed_col]].copy()
+                rent_zip = rent_zip[rent_zip['zipcode'].notna() & rent_zip[bed_col].notna()]
+                rent_zip = rent_zip[rent_zip['zipcode'].astype(str).str.len() == 5]
+                
+                # Prepare income data (ZIP-level only)
+                income_zip = income_df[['zipcode', 'median_income']].copy()
+                income_zip = income_zip[income_zip['zipcode'].notna() & income_zip['median_income'].notna()]
+                income_zip = income_zip[income_zip['zipcode'].astype(str).str.len() == 5]
+                
+                # Merge on ZIP code
+                merged = rent_zip.merge(income_zip, on='zipcode', how='inner')
+                merged = merged[(merged[bed_col] > 0) & (merged['median_income'] > 0)]
+                
+                # Calculate ratio: median_rent / (median_income / 12)
+                # This gives monthly rent as a fraction of monthly income
+                merged['rent_to_income'] = merged[bed_col] / (merged['median_income'] / 12)
+                merged = merged[merged['rent_to_income'].notna() & (merged['rent_to_income'] > 0)]
+                merged = merged.nlargest(3, 'rent_to_income')
+                
+                for _, row in merged.iterrows():
+                    zipcode = str(row['zipcode']).strip()
+                    ratio_val = float(row['rent_to_income'])
+                    results['highest_ratio'].append({
+                        'zipcode': zipcode,
+                        'value': ratio_val,
+                        'display': f"ZIP {zipcode} — {ratio_val:.2f}"
+                    })
+        
+        # Fill to 3 items if needed
+        while len(results['highest_ratio']) < 3:
+            results['highest_ratio'].append({
+                'zipcode': None,
+                'value': None,
+                'display': "Data unavailable"
+            })
+        
+        return results
+    
+    # Get top 3 critical areas data
+    top3_data = prepare_top3_critical_areas()
+    
+    # Render Top 3 Most Critical Areas section
     st.markdown("### 📋 Top 3 Most Critical Areas")
     
-    # Calculate and display worst cases for each metric
-    col1, col2, col3, col4 = st.columns(4)
+    # Three-column layout
+    col1, col2, col3 = st.columns(3)
     
-    # 1. Lowest Median Rent
-    if not rent_df.empty and bedroom_type != "All":
-        bed_col = f'rent_{bedroom_type.lower().replace("+", "")}'
-        if bed_col in rent_df.columns and rent_df[bed_col].notna().any():
-            worst_rent = rent_df.nsmallest(3, bed_col)
-            with col1:
-                st.markdown("**🔴 Lowest Median Rent**")
-                if not worst_rent.empty:
-                    for _, row in worst_rent.iterrows():
-                        location = str(row.get('area_name', '') or row.get('zipcode', '') or row.get('borough', '') or 'N/A')
-                        rent_val = row.get(bed_col)
-                        if pd.notna(rent_val):
-                            st.write(f"**{location}**<br/>${rent_val:,.0f}", unsafe_allow_html=True)
-                else:
-                    st.write("No data available")
-        else:
-            with col1:
-                st.markdown("**🔴 Lowest Median Rent**")
-                st.write("No data available")
-
-    # 2. Lowest Median Income
-    if not income_df.empty and 'median_income' in income_df.columns:
-        worst_income = income_df.nsmallest(3, 'median_income')
-        with col2:
-            st.markdown("**🔴 Lowest Median Income**")
-            if not worst_income.empty:
-                for _, row in worst_income.iterrows():
-                    location = str(row.get('area_name', '') or row.get('zipcode', '') or row.get('borough', '') or 'N/A')
-                    income_val = row.get('median_income')
-                    if pd.notna(income_val):
-                        st.write(f"**{location}**<br/>${income_val:,.0f}", unsafe_allow_html=True)
-            else:
-                st.write("No data available")
-    else:
-        with col2:
-            st.markdown("**🔴 Lowest Median Income**")
-            st.write("No data available")
-
-    # 3. Highest Rent Burden
-    if not burden_df.empty and 'rent_burden_rate' in burden_df.columns:
-        worst_burden = burden_df.nlargest(3, 'rent_burden_rate')
-        with col3:
-            st.markdown("**🔴 Highest Rent Burden**")
-            if not worst_burden.empty:
-                for _, row in worst_burden.iterrows():
-                    location = str(row.get('zipcode', '') or row.get('area_name', '') or 'N/A')
-                    burden_val = row.get('rent_burden_rate')
-                    if pd.notna(burden_val):
-                        st.write(f"**{location}**<br/>{burden_val:.1f}%", unsafe_allow_html=True)
-            else:
-                st.write("No data available")
-    else:
-        with col3:
-            st.markdown("**🔴 Highest Rent Burden**")
-            st.write("No data available")
+    # Column 1: Lowest Median Income
+    with col1:
+        st.markdown("**🔴 Lowest Income ZIPs**")
+        st.markdown("<div style='margin-top: 0.5rem;'></div>", unsafe_allow_html=True)
+        for item in top3_data['lowest_income'][:3]:
+            st.markdown(f"<div style='padding: 0.25rem 0; font-family: monospace;'>{item['display']}</div>", unsafe_allow_html=True)
     
-    # 4. Highest Rent-to-Income Ratio (if we can calculate)
-    if not rent_df.empty and not income_df.empty:
-        # Merge rent and income data
-        if bedroom_type != "All":
-            bed_col = f'rent_{bedroom_type.lower().replace("+", "")}'
-            if bed_col in rent_df.columns and 'zipcode' in rent_df.columns and 'zipcode' in income_df.columns:
-                merged = rent_df.merge(income_df, on='zipcode', how='inner', suffixes=('_rent', '_income'))
-                if 'median_income' in merged.columns and merged['median_income'].notna().any():
-                    merged['rent_to_income'] = merged[bed_col] / merged['median_income']
-                    merged = merged[merged['rent_to_income'].notna() & (merged['rent_to_income'] > 0)]
-                    worst_ratio = merged.nlargest(3, 'rent_to_income') if not merged.empty else pd.DataFrame()
-                    with col4:
-                        st.markdown("**🔴 Highest Rent-to-Income Ratio**")
-                        if not worst_ratio.empty:
-                            for _, row in worst_ratio.iterrows():
-                                location = str(row.get('area_name', '') or row.get('zipcode', '') or 'N/A')
-                                ratio_val = row.get('rent_to_income')
-                                if pd.notna(ratio_val):
-                                    st.write(f"**{location}**<br/>{ratio_val:.2f}", unsafe_allow_html=True)
-                        else:
-                            st.write("No data available")
-            else:
-                with col4:
-                    st.markdown("**🔴 Highest Rent-to-Income Ratio**")
-                    st.write("No data available")
-    else:
-        with col4:
-            st.markdown("**🔴 Highest Rent-to-Income Ratio**")
-            st.write("No data available")
+    # Column 2: Highest Rent Burden
+    with col2:
+        st.markdown("**🔴 Highest Rent Burden ZIPs**")
+        st.markdown("<div style='margin-top: 0.5rem;'></div>", unsafe_allow_html=True)
+        for item in top3_data['highest_burden'][:3]:
+            st.markdown(f"<div style='padding: 0.25rem 0; font-family: monospace;'>{item['display']}</div>", unsafe_allow_html=True)
+    
+    # Column 3: Highest Rent-to-Income Ratio
+    with col3:
+        st.markdown("**🔴 Highest Rent-to-Income Ratio ZIPs**")
+        st.markdown("<div style='margin-top: 0.5rem;'></div>", unsafe_allow_html=True)
+        for item in top3_data['highest_ratio'][:3]:
+            st.markdown(f"<div style='padding: 0.25rem 0; font-family: monospace;'>{item['display']}</div>", unsafe_allow_html=True)
     
     st.divider()
     
