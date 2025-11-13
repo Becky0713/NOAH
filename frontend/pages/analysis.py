@@ -84,14 +84,23 @@ def fetch_median_rent_data():
         
         for col in column_names:
             col_lower = col.lower()
-            if 'studio' in col_lower and 'rent' in col_lower:
-                bedroom_cols['studio'] = col
-            elif ('1br' in col_lower or '1_br' in col_lower or 'one' in col_lower) and 'rent' in col_lower:
-                bedroom_cols['1br'] = col
-            elif ('2br' in col_lower or '2_br' in col_lower or 'two' in col_lower) and 'rent' in col_lower:
-                bedroom_cols['2br'] = col
-            elif ('3br' in col_lower or '3_br' in col_lower or '3+' in col_lower or 'three' in col_lower) and 'rent' in col_lower:
-                bedroom_cols['3+br'] = col
+            if ('studio' in col_lower or '0br' in col_lower or 'efficiency' in col_lower) and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower):
+                bedroom_cols.setdefault('studio', col)
+            elif (
+                any(token in col_lower for token in ['1br', '1_br', 'one', '1-bedroom', 'one_bed'])
+                and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower)
+            ):
+                bedroom_cols.setdefault('1br', col)
+            elif (
+                any(token in col_lower for token in ['2br', '2_br', 'two', 'two_bed', '2-bedroom'])
+                and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower)
+            ):
+                bedroom_cols.setdefault('2br', col)
+            elif (
+                any(token in col_lower for token in ['3br', '3_br', '3+', 'three', 'three_bed', '4br', '4_br', 'five', '5br', '6br'])
+                and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower)
+            ):
+                bedroom_cols.setdefault('3+br', col)
         
         # Find location columns
         zip_col = None
@@ -116,6 +125,7 @@ def fetch_median_rent_data():
         if not bedroom_cols:
             conn.close()
             st.warning("⚠️ Could not find bedroom type rent columns")
+            st.info(f"Available columns in `noah_streeteasy_medianrent_2025_10`: {column_names}")
             return pd.DataFrame()
         
         # Build query
@@ -390,7 +400,7 @@ def get_coordinates_for_locations(df, location_col='zipcode'):
         st.warning(f"⚠️ Could not fetch coordinates: {str(e)[:100]}")
         return df
 
-def render_map_visualization(df, value_col, title, reverse_color=False, location_col='zipcode'):
+def render_map_visualization(df, value_col, title, reverse=False, location_col='zipcode'):
     """Render a map visualization with color coding"""
     if df.empty or value_col not in df.columns:
         st.warning(f"⚠️ No data available for {title}")
@@ -412,7 +422,7 @@ def render_map_visualization(df, value_col, title, reverse_color=False, location
         
         if not map_df.empty:
             # Create color scale
-            colors = create_color_scale(map_df[value_col], reverse=reverse_color)
+            colors = create_color_scale(map_df[value_col], reverse=reverse)
             map_df['color'] = colors
             
             # Create PyDeck map
@@ -544,63 +554,88 @@ def render_analysis_page():
     # 1. Lowest Median Rent
     if not rent_df.empty and bedroom_type != "All":
         bed_col = f'rent_{bedroom_type.lower().replace("+", "")}'
-        if bed_col in rent_df.columns:
-            worst_rent = rent_df.nsmallest(3, bed_col)[['zipcode', 'area_name', 'borough', bed_col]].copy()
+        if bed_col in rent_df.columns and rent_df[bed_col].notna().any():
+            worst_rent = rent_df.nsmallest(3, bed_col)
             with col1:
                 st.markdown("**🔴 Lowest Median Rent**")
                 if not worst_rent.empty:
-                    for idx, row in worst_rent.iterrows():
-                        location = str(row.get('area_name', '')) or str(row.get('zipcode', '')) or 'N/A'
-                        rent_val = row[bed_col]
-                        st.write(f"**{location}**<br/>${rent_val:,.0f}", unsafe_allow_html=True)
+                    for _, row in worst_rent.iterrows():
+                        location = str(row.get('area_name', '') or row.get('zipcode', '') or row.get('borough', '') or 'N/A')
+                        rent_val = row.get(bed_col)
+                        if pd.notna(rent_val):
+                            st.write(f"**{location}**<br/>${rent_val:,.0f}", unsafe_allow_html=True)
                 else:
                     st.write("No data available")
-    
+        else:
+            with col1:
+                st.markdown("**🔴 Lowest Median Rent**")
+                st.write("No data available")
+
     # 2. Lowest Median Income
-    if not income_df.empty:
-        worst_income = income_df.nsmallest(3, 'median_income')[['zipcode', 'area_name', 'borough', 'median_income']].copy()
+    if not income_df.empty and 'median_income' in income_df.columns:
+        worst_income = income_df.nsmallest(3, 'median_income')
         with col2:
             st.markdown("**🔴 Lowest Median Income**")
             if not worst_income.empty:
-                for idx, row in worst_income.iterrows():
-                    location = str(row.get('area_name', '')) or str(row.get('zipcode', '')) or 'N/A'
-                    income_val = row['median_income']
-                    st.write(f"**{location}**<br/>${income_val:,.0f}", unsafe_allow_html=True)
+                for _, row in worst_income.iterrows():
+                    location = str(row.get('area_name', '') or row.get('zipcode', '') or row.get('borough', '') or 'N/A')
+                    income_val = row.get('median_income')
+                    if pd.notna(income_val):
+                        st.write(f"**{location}**<br/>${income_val:,.0f}", unsafe_allow_html=True)
             else:
                 st.write("No data available")
-    
+    else:
+        with col2:
+            st.markdown("**🔴 Lowest Median Income**")
+            st.write("No data available")
+
     # 3. Highest Rent Burden
-    if not burden_df.empty:
-        worst_burden = burden_df.nlargest(3, 'rent_burden_rate')[['zipcode', 'rent_burden_rate']].copy()
+    if not burden_df.empty and 'rent_burden_rate' in burden_df.columns:
+        worst_burden = burden_df.nlargest(3, 'rent_burden_rate')
         with col3:
             st.markdown("**🔴 Highest Rent Burden**")
             if not worst_burden.empty:
-                for idx, row in worst_burden.iterrows():
-                    location = str(row.get('zipcode', '')) or 'N/A'
-                    burden_val = row['rent_burden_rate']
-                    st.write(f"**{location}**<br/>{burden_val:.1f}%", unsafe_allow_html=True)
+                for _, row in worst_burden.iterrows():
+                    location = str(row.get('zipcode', '') or row.get('area_name', '') or 'N/A')
+                    burden_val = row.get('rent_burden_rate')
+                    if pd.notna(burden_val):
+                        st.write(f"**{location}**<br/>{burden_val:.1f}%", unsafe_allow_html=True)
             else:
                 st.write("No data available")
+    else:
+        with col3:
+            st.markdown("**🔴 Highest Rent Burden**")
+            st.write("No data available")
     
     # 4. Highest Rent-to-Income Ratio (if we can calculate)
     if not rent_df.empty and not income_df.empty:
         # Merge rent and income data
         if bedroom_type != "All":
             bed_col = f'rent_{bedroom_type.lower().replace("+", "")}'
-            if bed_col in rent_df.columns:
+            if bed_col in rent_df.columns and 'zipcode' in rent_df.columns and 'zipcode' in income_df.columns:
                 merged = rent_df.merge(income_df, on='zipcode', how='inner', suffixes=('_rent', '_income'))
                 if 'median_income' in merged.columns and merged['median_income'].notna().any():
                     merged['rent_to_income'] = merged[bed_col] / merged['median_income']
-                    worst_ratio = merged.nlargest(3, 'rent_to_income')[['zipcode', 'area_name', 'rent_to_income']].copy()
+                    merged = merged[merged['rent_to_income'].notna() & (merged['rent_to_income'] > 0)]
+                    worst_ratio = merged.nlargest(3, 'rent_to_income') if not merged.empty else pd.DataFrame()
                     with col4:
                         st.markdown("**🔴 Highest Rent-to-Income Ratio**")
                         if not worst_ratio.empty:
-                            for idx, row in worst_ratio.iterrows():
-                                location = str(row.get('area_name', '')) or str(row.get('zipcode', '')) or 'N/A'
-                                ratio_val = row['rent_to_income']
-                                st.write(f"**{location}**<br/>{ratio_val:.2f}", unsafe_allow_html=True)
+                            for _, row in worst_ratio.iterrows():
+                                location = str(row.get('area_name', '') or row.get('zipcode', '') or 'N/A')
+                                ratio_val = row.get('rent_to_income')
+                                if pd.notna(ratio_val):
+                                    st.write(f"**{location}**<br/>{ratio_val:.2f}", unsafe_allow_html=True)
                         else:
                             st.write("No data available")
+            else:
+                with col4:
+                    st.markdown("**🔴 Highest Rent-to-Income Ratio**")
+                    st.write("No data available")
+    else:
+        with col4:
+            st.markdown("**🔴 Highest Rent-to-Income Ratio**")
+            st.write("No data available")
     
     st.divider()
     
