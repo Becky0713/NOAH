@@ -252,51 +252,26 @@ def fetch_median_income_data():
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_rent_burden_analysis_data():
-    """Fetch rent burden data for analysis"""
+    """Fetch ZIP-level rent burden data from noah_zip_rentburden table"""
     try:
         conn = get_db_connection()
         
-        # Try noah_zip_rentburden first
-        column_query = """
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'noah_zip_rentburden'
-        ORDER BY ordinal_position;
+        # Use new ZIP-level table
+        query = """
+        SELECT zip_code as zipcode, rent_burden_rate, severe_burden_rate
+        FROM noah_zip_rentburden
+        WHERE zip_code IS NOT NULL AND rent_burden_rate IS NOT NULL;
         """
-        columns_df = pd.read_sql_query(column_query, conn)
-        
-        if not columns_df.empty:
-            column_names = columns_df['column_name'].tolist()
-            
-            # Find rent burden column
-            burden_col = None
-            for col in column_names:
-                if 'rent' in col.lower() and 'burden' in col.lower():
-                    burden_col = col
-                    break
-            
-            # Find zip code column
-            zip_col = None
-            for col in ['zipcode', 'zip_code', 'postcode', 'postal_code', 'zip', 'zcta']:
-                if col in column_names:
-                    zip_col = col
-                    break
-            
-            if burden_col and zip_col:
-                query = f"""
-                SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
-                FROM noah_zip_rentburden
-                WHERE "{burden_col}" IS NOT NULL
-                """
-                df = pd.read_sql_query(query, conn)
-                df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
-                df = df[df['zipcode'].notna()]
-                df['rent_burden_rate'] = pd.to_numeric(df['rent_burden_rate'], errors='coerce')
-                df = df[df['rent_burden_rate'].notna()]
-                conn.close()
-                return df
-        
+        df = pd.read_sql_query(query, conn)
         conn.close()
+        
+        if not df.empty:
+            df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+            df = df[df['zipcode'].notna()]
+            df['rent_burden_rate'] = pd.to_numeric(df['rent_burden_rate'], errors='coerce')
+            df = df[df['rent_burden_rate'].notna()]
+            return df
+        
         return pd.DataFrame()
     except Exception as e:
         st.warning(f"⚠️ Could not fetch rent burden data: {str(e)[:200]}")
