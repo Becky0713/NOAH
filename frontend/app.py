@@ -452,38 +452,55 @@ def render_top_navigation():
 def render_filter_panel():
     """Render left filter panel"""
     with st.container():
-        # Sample size with option to show all
-        st.markdown("#### 📊 Data Options")
-        show_all = st.checkbox("Show All Projects (may take longer)", value=False)
-        if show_all:
-            sample_size = 10000  # Large number to fetch all (backend will handle pagination if needed)
-        else:
-            sample_size = st.slider("Sample Size", min_value=10, max_value=5000, value=100, step=50)
-        
+        # Always fetch a large sample to display all projects
+        sample_size = 10000
+
+        # Project-level filters
+        st.markdown("#### 🏢 Project Filters")
+        status_options = ["All", "In Progress", "Completed"]
+        project_status = st.selectbox("Project Status", status_options, index=0)
+
+        low_income_only = st.checkbox("Only show projects with low-income units", value=False, key="low_income_filter")
+
+        # Bedroom filters (checkboxes)
+        st.markdown("#### 🛏️ Bedroom")
+        bedroom_checks = {
+            "Studio": st.checkbox("Studio", value=True, key="bedroom_filter_studio"),
+            "1 Bedroom": st.checkbox("1 Bedroom", value=True, key="bedroom_filter_1"),
+            "2 Bedroom": st.checkbox("2 Bedroom", value=True, key="bedroom_filter_2"),
+            "3+ Bedroom": st.checkbox("3+ Bedroom", value=True, key="bedroom_filter_3_plus"),
+        }
+        selected_bedrooms = [label for label, selected in bedroom_checks.items() if selected]
+        if not selected_bedrooms:
+            st.warning("Select at least one bedroom type to display projects.")
+
         # Location filters
         st.markdown("#### 📍 Location Filters")
         borough_options = ["", "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
         selected_borough = st.selectbox("Borough", borough_options, index=0)
-        
+
         # Postcode filter
         postcode_filter = st.text_input(
             "Postcode (e.g., 10025)",
             placeholder="Enter postcode to filter...",
             key="postcode_filter"
         )
-        
+
         # Street name filter
         street_name_filter = st.text_input(
             "Street Name (e.g., Broadway)",
             placeholder="Enter street name to filter...",
             key="street_name_filter"
         )
-        
+
         return {
             "sample_size": sample_size,
             "borough": selected_borough,
             "postcode": postcode_filter.strip() if postcode_filter else "",
             "street_name": street_name_filter.strip() if street_name_filter else "",
+            "project_status": project_status,
+            "low_income_only": low_income_only,
+            "bedroom_filters": selected_bedrooms,
             "min_units": 0,
             "max_units": 0,
             "start_date_from": "",
@@ -997,7 +1014,7 @@ def main():
                     else:
                         # Fill NaN values
                         df[col] = df[col].fillna('')
-
+                
                 # Merge Market Median Rent data - try ZIP code first, then borough
                 market_rent_df, rent_data_month = fetch_market_median_rent_data()
 
@@ -1130,74 +1147,122 @@ def main():
                         df[col] = pd.to_numeric(df[col], errors='coerce')
                         df[col] = df[col].fillna(0).astype(int)
                 
-                # Apply frontend filters (postcode and street name)
-                original_count = len(df)
+                # Keep track of counts for summary messaging
+                total_initial_count = len(df)
                 
-                # Filter by postcode if provided
-                if filter_params.get("postcode") and filter_params["postcode"]:
-                    postcode_filter = filter_params["postcode"].strip()
-                    if 'postcode' in df.columns:
-                        # Convert postcode to string for comparison
-                        df['postcode_str'] = df['postcode'].astype(str)
-                        df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
-                    elif 'postal_code' in df.columns:
-                        df['postcode_str'] = df['postal_code'].astype(str)
-                        df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
-                    elif 'zip_code' in df.columns:
-                        df['postcode_str'] = df['zip_code'].astype(str)
-                        df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
+                # Project status filter
+                status_filter = filter_params.get("project_status")
+                if status_filter and status_filter != "All" and len(df) > 0:
+                    if 'building_completion_display' in df.columns:
+                        status_series = df['building_completion_display'].fillna('').astype(str).str.strip()
+                        if status_filter == "In Progress":
+                            df = df[status_series.eq('') | status_series.str.lower().eq("in progress")]
+                        elif status_filter == "Completed":
+                            df = df[~status_series.str.lower().eq("in progress") & (status_series != '')]
+                    elif 'project_completion_date' in df.columns:
+                        date_series = df['project_completion_date'].astype(str).fillna('')
+                        if status_filter == "In Progress":
+                            df = df[(date_series.str.strip() == '') | date_series.str.contains("In Progress", case=False, na=False)]
+                        elif status_filter == "Completed":
+                            df = df[(date_series.str.strip() != '') & ~date_series.str.contains("In Progress", case=False, na=False)]
                 
-                # Filter by street name if provided (fuzzy match)
-                if filter_params.get("street_name") and filter_params["street_name"]:
-                    street_filter = filter_params["street_name"].strip().lower()
+                # Low-income units filter
+                if filter_params.get("low_income_only") and len(df) > 0:
+                    low_income_mask = (
+                        (df['extremely_low_income_units'] > 0) |
+                        (df['very_low_income_units'] > 0) |
+                        (df['low_income_units'] > 0)
+                    )
+                    df = df[low_income_mask]
+                
+                # Bedroom filters
+                bedroom_selection = filter_params.get("bedroom_filters", [])
+                bedroom_columns = {
+                    "Studio": ['studio_units'],
+                    "1 Bedroom": ['_1_br_units'],
+                    "2 Bedroom": ['_2_br_units'],
+                    "3+ Bedroom": ['_3_br_units', '_4_br_units', '_5_br_units', '_6_br_units'],
+                }
+                if bedroom_selection is not None:
+                    # If user deselects all options, result should be empty with guidance
+                    if len(bedroom_selection) == 0:
+                        st.warning("⚠️ No bedroom types selected. Please select at least one bedroom option to display projects.")
+                        df = df.iloc[0:0]
+                    elif len(bedroom_selection) < len(bedroom_columns):
+                        bedroom_mask = pd.Series(False, index=df.index)
+                        for label in bedroom_selection:
+                            for col in bedroom_columns.get(label, []):
+                                if col in df.columns:
+                                    bedroom_mask = bedroom_mask | (df[col] > 0)
+                        df = df[bedroom_mask]
+                
+                # Apply frontend location filters (postcode and street name)
+                if len(df) > 0:
+                    # Filter by postcode if provided
+                    if filter_params.get("postcode") and filter_params["postcode"]:
+                        postcode_filter = filter_params["postcode"].strip()
+                        if 'postcode' in df.columns:
+                            # Convert postcode to string for comparison
+                            df['postcode_str'] = df['postcode'].astype(str)
+                            df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
+                        elif 'postal_code' in df.columns:
+                            df['postcode_str'] = df['postal_code'].astype(str)
+                            df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
+                        elif 'zip_code' in df.columns:
+                            df['postcode_str'] = df['zip_code'].astype(str)
+                            df = df[df['postcode_str'].str.contains(postcode_filter, case=False, na=False)]
                     
-                    # Create a mask to check multiple fields
-                    mask = pd.Series([False] * len(df), index=df.index)
-                    
-                    # Check all possible street name fields
-                    street_fields = ['street_name', 'streetname', 'street', 'street__name', 'street_name_1']
-                    for field in street_fields:
-                        if field in df.columns:
-                            field_str = df[field].astype(str).fillna('').str.lower()
-                            mask = mask | field_str.str.contains(street_filter, case=False, na=False)
-                    
-                    # Check address field (which may contain street name)
-                    if 'address' in df.columns:
-                        address_str = df['address'].astype(str).fillna('').str.lower()
-                        mask = mask | address_str.str.contains(street_filter, case=False, na=False)
-                    
-                    # Check house_number + street_name combination
-                    if 'house_number' in df.columns:
-                        # Try with street_name field
-                        if 'street_name' in df.columns:
-                            full_address = (df['house_number'].astype(str).fillna('') + ' ' + 
-                                           df['street_name'].astype(str).fillna('')).str.strip().str.lower()
-                            mask = mask | full_address.str.contains(street_filter, case=False, na=False)
-                        # Also try with any street field
+                    # Filter by street name if provided (fuzzy match)
+                    if filter_params.get("street_name") and filter_params["street_name"]:
+                        street_filter = filter_params["street_name"].strip().lower()
+                        
+                        # Create a mask to check multiple fields
+                        mask = pd.Series([False] * len(df), index=df.index)
+                        
+                        # Check all possible street name fields
+                        street_fields = ['street_name', 'streetname', 'street', 'street__name', 'street_name_1']
                         for field in street_fields:
                             if field in df.columns:
+                                field_str = df[field].astype(str).fillna('').str.lower()
+                                mask = mask | field_str.str.contains(street_filter, case=False, na=False)
+                        
+                        # Check address field (which may contain street name)
+                        if 'address' in df.columns:
+                            address_str = df['address'].astype(str).fillna('').str.lower()
+                            mask = mask | address_str.str.contains(street_filter, case=False, na=False)
+                        
+                        # Check house_number + street_name combination
+                        if 'house_number' in df.columns:
+                            # Try with street_name field
+                            if 'street_name' in df.columns:
                                 full_address = (df['house_number'].astype(str).fillna('') + ' ' + 
-                                               df[field].astype(str).fillna('')).str.strip().str.lower()
+                                               df['street_name'].astype(str).fillna('')).str.strip().str.lower()
                                 mask = mask | full_address.str.contains(street_filter, case=False, na=False)
-                    
-                    # Check project_name field (may contain street name)
-                    if 'project_name' in df.columns:
-                        project_name_str = df['project_name'].astype(str).fillna('').str.lower()
-                        mask = mask | project_name_str.str.contains(street_filter, case=False, na=False)
-                    
-                    # Apply the mask
-                    if mask.any():
-                        df = df[mask]
-                    else:
-                        # If no matches found, set df to empty and show warning
-                        df = df.iloc[0:0]  # Create empty DataFrame with same columns
-                        st.warning(f"⚠️ No projects found matching street name: '{filter_params['street_name']}'. Try checking available fields in Debug Info.")
+                            # Also try with any street field
+                            for field in street_fields:
+                                if field in df.columns:
+                                    full_address = (df['house_number'].astype(str).fillna('') + ' ' + 
+                                                   df[field].astype(str).fillna('')).str.strip().str.lower()
+                                    mask = mask | full_address.str.contains(street_filter, case=False, na=False)
+                        
+                        # Check project_name field (may contain street name)
+                        if 'project_name' in df.columns:
+                            project_name_str = df['project_name'].astype(str).fillna('').str.lower()
+                            mask = mask | project_name_str.str.contains(street_filter, case=False, na=False)
+                        
+                        # Apply the mask
+                        if mask.any():
+                            df = df[mask]
+                        else:
+                            # If no matches found, set df to empty and show warning
+                            df = df.iloc[0:0]  # Create empty DataFrame with same columns
+                            st.warning(f"⚠️ No projects found matching street name: '{filter_params['street_name']}'. Try checking available fields in Debug Info.")
                 
-                filtered_count = len(df)
-                if original_count != filtered_count:
-                    st.info(f"📍 Showing {filtered_count} of {original_count} projects (filtered by location)")
+                final_count = len(df)
+                if final_count != total_initial_count:
+                    st.info(f"📍 Showing {final_count} of {total_initial_count} projects (filters applied)")
                 else:
-                    st.write(f"📍 Showing {len(df)} projects")
+                    st.write(f"📍 Showing {final_count} projects")
                 
                 # Debug: Show available fields if requested (especially useful for street name filtering)
                 if st.checkbox("🔍 Show Debug Info", value=False):
