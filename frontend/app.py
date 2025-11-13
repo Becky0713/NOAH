@@ -1057,8 +1057,7 @@ def main():
                         st.success(f"✅ Matched market median rent data for {matched_count} projects")
                     else:
                         st.warning("⚠️ Market median rent data loaded but no matches found. Check zip code/borough format.")
-                else:
-                    st.warning("⚠️ No market median rent data found in database. Check if `noah_streeteasy_medianrent_2025_10` table exists.")
+                # (no warning when table is missing; dataset is optional)
                 
                 # Keep average_rent for backward compatibility (use market_median_rent if available)
                 if 'average_rent' not in df.columns:
