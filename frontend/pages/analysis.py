@@ -867,12 +867,12 @@ def render_analysis_page():
         except Exception as e:
             st.warning(f"⚠️ Error calculating rent-to-income ratio: {str(e)[:100]}")
         
-        # Fill to 3 items if needed - show "待填充" for rent-to-income ratio
+        # Fill to 3 items if needed - show "Pending" for rent-to-income ratio
         while len(results['highest_ratio']) < 3:
             results['highest_ratio'].append({
                 'zipcode': None,
                 'value': None,
-                'display': "待填充"
+                'display': "Pending"
             })
         
         return results
