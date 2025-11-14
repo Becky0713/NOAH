@@ -169,109 +169,142 @@ def fetch_median_rent_data():
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_median_income_data():
-    """Fetch ZIP-level median income data from noah_zip_income table"""
+    """Fetch ZIP-level median income data - auto-detect table and columns"""
     try:
         conn = get_db_connection()
         
-        # Try new ZIP-level table first
-        query = """
-        SELECT zip_code as zipcode, median_income_usd as median_income
-        FROM noah_zip_income
-        WHERE zip_code IS NOT NULL AND median_income_usd IS NOT NULL;
+        # Find ZIP-level income table
+        table_query = """
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND (table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%')
+        ORDER BY table_name;
         """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
+        tables_df = pd.read_sql_query(table_query, conn)
         
-        if not df.empty:
-            df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
-            df = df[df['zipcode'].notna()]
-            df['median_income'] = pd.to_numeric(df['median_income'], errors='coerce')
-            df = df[df['median_income'].notna()]
-            return df
-        
-        # Fallback to old table if new one doesn't exist
-        conn = get_db_connection()
-        column_query = """
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'median_income'
-        ORDER BY ordinal_position;
-        """
-        columns_df = pd.read_sql_query(column_query, conn)
-        
-        if columns_df.empty:
+        if tables_df.empty:
             conn.close()
             return pd.DataFrame()
         
-        column_names = columns_df['column_name'].tolist()
-        income_col = None
-        for col in ['median_household_income', 'median_income', 'income', 'household_income']:
-            if col in column_names:
-                income_col = col
-                break
+        # Try each table until we find one with data
+        for table_name in tables_df['table_name'].tolist():
+            try:
+                # Get columns
+                col_query = f"""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = '{table_name}'
+                ORDER BY ordinal_position;
+                """
+                cols_df = pd.read_sql_query(col_query, conn)
+                column_names = cols_df['column_name'].tolist()
+                
+                # Find zip and income columns
+                zip_col = None
+                for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code', 'zcta']:
+                    if col in column_names:
+                        zip_col = col
+                        break
+                
+                income_col = None
+                for col in ['median_income_usd', 'median_income', 'median_household_income', 'income', 'household_income']:
+                    if col in column_names:
+                        income_col = col
+                        break
+                
+                if zip_col and income_col:
+                    query = f"""
+                    SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
+                    FROM {table_name}
+                    WHERE "{zip_col}" IS NOT NULL AND "{income_col}" IS NOT NULL;
+                    """
+                    df = pd.read_sql_query(query, conn)
+                    
+                    if not df.empty:
+                        df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                        df = df[df['zipcode'].notna()]
+                        df['median_income'] = pd.to_numeric(df['median_income'], errors='coerce')
+                        df = df[df['median_income'].notna()]
+                        conn.close()
+                        return df
+            except Exception:
+                continue
         
-        if not income_col:
-            conn.close()
-            return pd.DataFrame()
-        
-        zip_col = None
-        for col in ['zipcode', 'zip_code', 'postcode', 'postal_code', 'zip', 'zcta']:
-            if col in column_names:
-                zip_col = col
-                break
-        
-        select_cols = [income_col]
-        if zip_col:
-            select_cols.append(zip_col)
-        
-        select_str = ", ".join([f'"{col}"' for col in select_cols])
-        query = f"""
-        SELECT {select_str}
-        FROM median_income
-        WHERE "{income_col}" IS NOT NULL
-        """
-        
-        df = pd.read_sql_query(query, conn)
         conn.close()
-        
-        if df.empty:
-            return pd.DataFrame()
-        
-        df = df.rename(columns={income_col: 'median_income'})
-        df['median_income'] = pd.to_numeric(df['median_income'], errors='coerce')
-        df = df[df['median_income'].notna()]
-        
-        if zip_col:
-            df['zipcode'] = df[zip_col].astype(str).str.extract(r'(\d{5})', expand=False)
-            df = df[df['zipcode'].notna()]
-        
-        return df
+        return pd.DataFrame()
     except Exception as e:
         st.warning(f"⚠️ Could not fetch median income data: {str(e)[:200]}")
         return pd.DataFrame()
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_rent_burden_analysis_data():
-    """Fetch ZIP-level rent burden data from noah_zip_rentburden table"""
+    """Fetch ZIP-level rent burden data - auto-detect table and columns"""
     try:
         conn = get_db_connection()
         
-        # Use new ZIP-level table
-        query = """
-        SELECT zip_code as zipcode, rent_burden_rate, severe_burden_rate
-        FROM noah_zip_rentburden
-        WHERE zip_code IS NOT NULL AND rent_burden_rate IS NOT NULL;
+        # Find ZIP-level rent burden table
+        table_query = """
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND (table_name LIKE '%zip%burden%' OR table_name LIKE '%burden%zip%' OR table_name LIKE '%rentburden%')
+        ORDER BY table_name;
         """
-        df = pd.read_sql_query(query, conn)
+        tables_df = pd.read_sql_query(table_query, conn)
+        
+        if tables_df.empty:
+            conn.close()
+            return pd.DataFrame()
+        
+        # Try each table until we find one with data
+        for table_name in tables_df['table_name'].tolist():
+            try:
+                # Get columns
+                col_query = f"""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = '{table_name}'
+                ORDER BY ordinal_position;
+                """
+                cols_df = pd.read_sql_query(col_query, conn)
+                column_names = cols_df['column_name'].tolist()
+                
+                # Find zip and burden columns
+                zip_col = None
+                for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code', 'zcta']:
+                    if col in column_names:
+                        zip_col = col
+                        break
+                
+                burden_col = None
+                for col in ['rent_burden_rate', 'burden_rate', 'rent_burden', 'burden']:
+                    if col in column_names:
+                        burden_col = col
+                        break
+                
+                if zip_col and burden_col:
+                    query = f"""
+                    SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
+                    FROM {table_name}
+                    WHERE "{zip_col}" IS NOT NULL AND "{burden_col}" IS NOT NULL;
+                    """
+                    df = pd.read_sql_query(query, conn)
+                    
+                    if not df.empty:
+                        df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                        df = df[df['zipcode'].notna()]
+                        df['rent_burden_rate'] = pd.to_numeric(df['rent_burden_rate'], errors='coerce')
+                        # If values are < 1, convert from decimal to percentage
+                        if df['rent_burden_rate'].max() < 1:
+                            df['rent_burden_rate'] = df['rent_burden_rate'] * 100
+                        df = df[df['rent_burden_rate'].notna()]
+                        conn.close()
+                        return df
+            except Exception:
+                continue
+        
         conn.close()
-        
-        if not df.empty:
-            df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
-            df = df[df['zipcode'].notna()]
-            df['rent_burden_rate'] = pd.to_numeric(df['rent_burden_rate'], errors='coerce')
-            df = df[df['rent_burden_rate'].notna()]
-            return df
-        
         return pd.DataFrame()
     except Exception as e:
         st.warning(f"⚠️ Could not fetch rent burden data: {str(e)[:200]}")
@@ -511,35 +544,64 @@ def render_analysis_page():
         }
         
         # 1. Lowest Median Income (ZIP-level only)
-        # Try unified table first, then fallback to individual table
+        # Directly query ZIP-level income table
         try:
             conn = get_db_connection()
-            unified_query = """
-            SELECT zip_code as zipcode, median_income_usd as median_income
-            FROM noah_affordability_analysis
-            WHERE zip_code IS NOT NULL AND median_income_usd IS NOT NULL
-            ORDER BY median_income_usd ASC
-            LIMIT 3;
+            
+            # Find ZIP-level income table
+            table_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND (table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%')
+            ORDER BY table_name;
             """
-            income_zip = pd.read_sql_query(unified_query, conn)
+            tables_df = pd.read_sql_query(table_query, conn)
+            
+            income_zip = pd.DataFrame()
+            for table_name in tables_df['table_name'].tolist():
+                try:
+                    col_query = f"""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = '{table_name}';
+                    """
+                    cols_df = pd.read_sql_query(col_query, conn)
+                    column_names = cols_df['column_name'].tolist()
+                    
+                    zip_col = None
+                    for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code']:
+                        if col in column_names:
+                            zip_col = col
+                            break
+                    
+                    income_col = None
+                    for col in ['median_income_usd', 'median_income', 'median_household_income', 'income']:
+                        if col in column_names:
+                            income_col = col
+                            break
+                    
+                    if zip_col and income_col:
+                        query = f"""
+                        SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
+                        FROM {table_name}
+                        WHERE "{zip_col}" IS NOT NULL AND "{income_col}" IS NOT NULL
+                        ORDER BY "{income_col}" ASC
+                        LIMIT 3;
+                        """
+                        income_zip = pd.read_sql_query(query, conn)
+                        if not income_zip.empty:
+                            break
+                except Exception:
+                    continue
+            
             conn.close()
             
             if not income_zip.empty:
-                for _, row in income_zip.iterrows():
-                    zipcode = str(row['zipcode']).strip()[:5]
-                    income_val = float(row['median_income'])
-                    results['lowest_income'].append({
-                        'zipcode': zipcode,
-                        'value': income_val,
-                        'display': f"ZIP {zipcode} — ${income_val:,.0f}"
-                    })
-        except Exception:
-            # Fallback to individual income table
-            if not income_df.empty and 'median_income' in income_df.columns and 'zipcode' in income_df.columns:
-                income_zip = income_df[['zipcode', 'median_income']].copy()
-                income_zip = income_zip[income_zip['zipcode'].notna() & income_zip['median_income'].notna()]
-                income_zip = income_zip[income_zip['zipcode'].astype(str).str.len() == 5]
-                income_zip = income_zip.nsmallest(3, 'median_income')
+                income_zip['zipcode'] = income_zip['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                income_zip = income_zip[income_zip['zipcode'].notna()]
+                income_zip['median_income'] = pd.to_numeric(income_zip['median_income'], errors='coerce')
+                income_zip = income_zip[income_zip['median_income'].notna()]
                 
                 for _, row in income_zip.iterrows():
                     zipcode = str(row['zipcode']).strip()[:5]
@@ -549,6 +611,8 @@ def render_analysis_page():
                         'value': income_val,
                         'display': f"ZIP {zipcode} — ${income_val:,.0f}"
                     })
+        except Exception as e:
+            st.warning(f"⚠️ Error fetching lowest income: {str(e)[:100]}")
         
         # Fill to 3 items if needed
         while len(results['lowest_income']) < 3:
@@ -559,38 +623,67 @@ def render_analysis_page():
             })
         
         # 2. Highest Rent Burden (ZIP-level only)
-        # Try unified table first, then fallback to individual table
+        # Directly query ZIP-level rent burden table
         try:
             conn = get_db_connection()
-            unified_query = """
-            SELECT zip_code as zipcode, rent_burden_rate
-            FROM noah_affordability_analysis
-            WHERE zip_code IS NOT NULL AND rent_burden_rate IS NOT NULL
-            ORDER BY rent_burden_rate DESC
-            LIMIT 3;
+            
+            # Find ZIP-level rent burden table
+            table_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND (table_name LIKE '%zip%burden%' OR table_name LIKE '%burden%zip%' OR table_name LIKE '%rentburden%')
+            ORDER BY table_name;
             """
-            burden_zip = pd.read_sql_query(unified_query, conn)
+            tables_df = pd.read_sql_query(table_query, conn)
+            
+            burden_zip = pd.DataFrame()
+            for table_name in tables_df['table_name'].tolist():
+                try:
+                    col_query = f"""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = '{table_name}';
+                    """
+                    cols_df = pd.read_sql_query(col_query, conn)
+                    column_names = cols_df['column_name'].tolist()
+                    
+                    zip_col = None
+                    for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code']:
+                        if col in column_names:
+                            zip_col = col
+                            break
+                    
+                    burden_col = None
+                    for col in ['rent_burden_rate', 'burden_rate', 'rent_burden', 'burden']:
+                        if col in column_names:
+                            burden_col = col
+                            break
+                    
+                    if zip_col and burden_col:
+                        query = f"""
+                        SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
+                        FROM {table_name}
+                        WHERE "{zip_col}" IS NOT NULL AND "{burden_col}" IS NOT NULL
+                        ORDER BY "{burden_col}" DESC
+                        LIMIT 3;
+                        """
+                        burden_zip = pd.read_sql_query(query, conn)
+                        if not burden_zip.empty:
+                            break
+                except Exception:
+                    continue
+            
             conn.close()
             
             if not burden_zip.empty:
-                for _, row in burden_zip.iterrows():
-                    zipcode = str(row['zipcode']).strip()[:5]
-                    burden_val = float(row['rent_burden_rate'])
-                    results['highest_burden'].append({
-                        'zipcode': zipcode,
-                        'value': burden_val,
-                        'display': f"ZIP {zipcode} — {burden_val:.0f}%"
-                    })
-        except Exception:
-            # Fallback to individual burden table
-            if not burden_df.empty and 'rent_burden_rate' in burden_df.columns and 'zipcode' in burden_df.columns:
-                burden_zip = burden_df[['zipcode', 'rent_burden_rate']].copy()
-                burden_zip = burden_zip[burden_zip['zipcode'].notna() & burden_zip['rent_burden_rate'].notna()]
-                burden_zip = burden_zip[burden_zip['zipcode'].astype(str).str.len() == 5]
+                burden_zip['zipcode'] = burden_zip['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                burden_zip = burden_zip[burden_zip['zipcode'].notna()]
                 burden_zip['rent_burden_rate'] = pd.to_numeric(burden_zip['rent_burden_rate'], errors='coerce')
+                # If values are < 1, convert from decimal to percentage
                 if burden_zip['rent_burden_rate'].max() < 1:
                     burden_zip['rent_burden_rate'] = burden_zip['rent_burden_rate'] * 100
-                burden_zip = burden_zip.nlargest(3, 'rent_burden_rate')
+                burden_zip = burden_zip[burden_zip['rent_burden_rate'].notna()]
                 
                 for _, row in burden_zip.iterrows():
                     zipcode = str(row['zipcode']).strip()[:5]
@@ -600,6 +693,8 @@ def render_analysis_page():
                         'value': burden_val,
                         'display': f"ZIP {zipcode} — {burden_val:.0f}%"
                     })
+        except Exception as e:
+            st.warning(f"⚠️ Error fetching highest rent burden: {str(e)[:100]}")
         
         # Fill to 3 items if needed
         while len(results['highest_burden']) < 3:
@@ -610,60 +705,131 @@ def render_analysis_page():
             })
         
         # 3. Highest Rent-to-Income Ratio (ZIP-level only)
-        # Try unified table first (has pre-calculated ratio)
+        # Calculate from ZIP-level rent and income tables
         try:
             conn = get_db_connection()
-            unified_query = """
-            SELECT zip_code as zipcode, rent_to_income_ratio as rent_to_income
-            FROM noah_affordability_analysis
-            WHERE zip_code IS NOT NULL AND rent_to_income_ratio IS NOT NULL
-            ORDER BY rent_to_income_ratio DESC
-            LIMIT 3;
-            """
-            ratio_zip = pd.read_sql_query(unified_query, conn)
-            conn.close()
             
-            if not ratio_zip.empty:
-                for _, row in ratio_zip.iterrows():
-                    zipcode = str(row['zipcode']).strip()[:5]
-                    ratio_val = float(row['rent_to_income'])
-                    results['highest_ratio'].append({
-                        'zipcode': zipcode,
-                        'value': ratio_val,
-                        'display': f"ZIP {zipcode} — {ratio_val:.2f}"
-                    })
-        except Exception:
-            # Fallback: calculate from rent and income tables
-            if not rent_df.empty and not income_df.empty:
-                if bedroom_type != "All":
-                    bed_col = f'rent_{bedroom_type.lower().replace("+", "")}'
-                else:
-                    bed_col = 'rent_1br'
+            # Find ZIP-level income table
+            income_table = None
+            income_table_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND (table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%')
+            ORDER BY table_name
+            LIMIT 1;
+            """
+            income_tables = pd.read_sql_query(income_table_query, conn)
+            if not income_tables.empty:
+                income_table = income_tables.iloc[0]['table_name']
+            
+            # Find ZIP-level rent table (StreetEasy)
+            rent_table = 'noah_streeteasy_medianrent_2025_10'
+            
+            if income_table:
+                # Get column names for income table
+                income_cols_query = f"""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = '{income_table}';
+                """
+                income_cols = pd.read_sql_query(income_cols_query, conn)
+                income_col_names = income_cols['column_name'].tolist()
                 
-                if bed_col in rent_df.columns and 'zipcode' in rent_df.columns and 'zipcode' in income_df.columns:
-                    rent_zip = rent_df[['zipcode', bed_col]].copy()
-                    rent_zip = rent_zip[rent_zip['zipcode'].notna() & rent_zip[bed_col].notna()]
-                    rent_zip = rent_zip[rent_zip['zipcode'].astype(str).str.len() == 5]
+                income_zip_col = None
+                for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code']:
+                    if col in income_col_names:
+                        income_zip_col = col
+                        break
+                
+                income_val_col = None
+                for col in ['median_income_usd', 'median_income', 'median_household_income', 'income']:
+                    if col in income_col_names:
+                        income_val_col = col
+                        break
+                
+                # Get column names for rent table
+                rent_cols_query = f"""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = '{rent_table}';
+                """
+                rent_cols = pd.read_sql_query(rent_cols_query, conn)
+                rent_col_names = rent_cols['column_name'].tolist()
+                
+                rent_zip_col = None
+                for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code']:
+                    if col in rent_col_names:
+                        rent_zip_col = col
+                        break
+                
+                rent_val_col = None
+                # Check if using bedroom_type column structure
+                if 'bedroom_type' in rent_col_names and 'median_rent_usd' in rent_col_names:
+                    # Use 1BR as default if "All" selected
+                    bed_filter = "1BR" if bedroom_type == "All" else bedroom_type
+                    query = f"""
+                    SELECT "{rent_zip_col}" as zipcode, "{rent_val_col or 'median_rent_usd'}" as median_rent
+                    FROM {rent_table}
+                    WHERE "{rent_zip_col}" IS NOT NULL 
+                    AND "{rent_val_col or 'median_rent_usd'}" IS NOT NULL
+                    AND bedroom_type = '{bed_filter}';
+                    """
+                else:
+                    # Try to find rent column
+                    for col in ['median_rent_usd', 'median_rent', 'rent', 'rent_price']:
+                        if col in rent_col_names:
+                            rent_val_col = col
+                            break
                     
-                    income_zip = income_df[['zipcode', 'median_income']].copy()
-                    income_zip = income_zip[income_zip['zipcode'].notna() & income_zip['median_income'].notna()]
-                    income_zip = income_zip[income_zip['zipcode'].astype(str).str.len() == 5]
+                    if rent_zip_col and rent_val_col:
+                        query = f"""
+                        SELECT "{rent_zip_col}" as zipcode, "{rent_val_col}" as median_rent
+                        FROM {rent_table}
+                        WHERE "{rent_zip_col}" IS NOT NULL AND "{rent_val_col}" IS NOT NULL;
+                        """
+                    else:
+                        query = None
+                
+                if query and income_zip_col and income_val_col:
+                    # Get income data
+                    income_query = f"""
+                    SELECT "{income_zip_col}" as zipcode, "{income_val_col}" as median_income
+                    FROM {income_table}
+                    WHERE "{income_zip_col}" IS NOT NULL AND "{income_val_col}" IS NOT NULL;
+                    """
+                    income_df_merge = pd.read_sql_query(income_query, conn)
                     
-                    merged = rent_zip.merge(income_zip, on='zipcode', how='inner')
-                    merged = merged[(merged[bed_col] > 0) & (merged['median_income'] > 0)]
+                    # Get rent data
+                    rent_df_merge = pd.read_sql_query(query, conn)
                     
-                    merged['rent_to_income'] = merged[bed_col] / (merged['median_income'] / 12)
-                    merged = merged[merged['rent_to_income'].notna() & (merged['rent_to_income'] > 0)]
-                    merged = merged.nlargest(3, 'rent_to_income')
-                    
-                    for _, row in merged.iterrows():
-                        zipcode = str(row['zipcode']).strip()[:5]
-                        ratio_val = float(row['rent_to_income'])
-                        results['highest_ratio'].append({
-                            'zipcode': zipcode,
-                            'value': ratio_val,
-                            'display': f"ZIP {zipcode} — {ratio_val:.2f}"
-                        })
+                    if not income_df_merge.empty and not rent_df_merge.empty:
+                        # Clean and merge
+                        income_df_merge['zipcode'] = income_df_merge['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                        rent_df_merge['zipcode'] = rent_df_merge['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                        
+                        merged = income_df_merge.merge(rent_df_merge, on='zipcode', how='inner')
+                        merged['median_income'] = pd.to_numeric(merged['median_income'], errors='coerce')
+                        merged['median_rent'] = pd.to_numeric(merged['median_rent'], errors='coerce')
+                        merged = merged[(merged['median_income'] > 0) & (merged['median_rent'] > 0)]
+                        
+                        # Calculate ratio: median_rent / (median_income / 12)
+                        merged['rent_to_income'] = merged['median_rent'] / (merged['median_income'] / 12)
+                        merged = merged[merged['rent_to_income'].notna() & (merged['rent_to_income'] > 0)]
+                        merged = merged.nlargest(3, 'rent_to_income')
+                        
+                        for _, row in merged.iterrows():
+                            zipcode = str(row['zipcode']).strip()[:5]
+                            ratio_val = float(row['rent_to_income'])
+                            results['highest_ratio'].append({
+                                'zipcode': zipcode,
+                                'value': ratio_val,
+                                'display': f"ZIP {zipcode} — {ratio_val:.2f}"
+                            })
+            
+            conn.close()
+        except Exception as e:
+            st.warning(f"⚠️ Error calculating rent-to-income ratio: {str(e)[:100]}")
         
         # Fill to 3 items if needed
         while len(results['highest_ratio']) < 3:
