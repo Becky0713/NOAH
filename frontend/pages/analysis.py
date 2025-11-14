@@ -585,7 +585,10 @@ def render_analysis_page():
                         query = f"""
                         SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
                         FROM {table_name}
-                        WHERE "{zip_col}" IS NOT NULL AND "{income_col}" IS NOT NULL
+                        WHERE "{zip_col}" IS NOT NULL 
+                        AND "{income_col}" IS NOT NULL
+                        AND "{income_col}" > 0
+                        AND CAST("{zip_col}" AS TEXT) ~ '^10[0-9]{3}$|^11[0-6][0-9]{2}$'
                         ORDER BY "{income_col}" ASC
                         LIMIT 3;
                         """
@@ -601,16 +604,24 @@ def render_analysis_page():
                 income_zip['zipcode'] = income_zip['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
                 income_zip = income_zip[income_zip['zipcode'].notna()]
                 income_zip['median_income'] = pd.to_numeric(income_zip['median_income'], errors='coerce')
-                income_zip = income_zip[income_zip['median_income'].notna()]
+                # Filter: only NYC ZIPs (100xx-116xx) and income > 0
+                income_zip = income_zip[
+                    (income_zip['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)) &
+                    (income_zip['median_income'].notna()) &
+                    (income_zip['median_income'] > 0)
+                ]
                 
-                for _, row in income_zip.iterrows():
-                    zipcode = str(row['zipcode']).strip()[:5]
-                    income_val = float(row['median_income'])
-                    results['lowest_income'].append({
-                        'zipcode': zipcode,
-                        'value': income_val,
-                        'display': f"ZIP {zipcode} — ${income_val:,.0f}"
-                    })
+                if not income_zip.empty:
+                    income_zip = income_zip.nsmallest(3, 'median_income')
+                    for _, row in income_zip.iterrows():
+                        zipcode = str(row['zipcode']).strip()[:5]
+                        income_val = float(row['median_income'])
+                        if income_val > 0:  # Double check
+                            results['lowest_income'].append({
+                                'zipcode': zipcode,
+                                'value': income_val,
+                                'display': f"ZIP {zipcode} — ${income_val:,.0f}"
+                            })
         except Exception as e:
             st.warning(f"⚠️ Error fetching lowest income: {str(e)[:100]}")
         
@@ -664,7 +675,10 @@ def render_analysis_page():
                         query = f"""
                         SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
                         FROM {table_name}
-                        WHERE "{zip_col}" IS NOT NULL AND "{burden_col}" IS NOT NULL
+                        WHERE "{zip_col}" IS NOT NULL 
+                        AND "{burden_col}" IS NOT NULL
+                        AND "{burden_col}" > 0
+                        AND CAST("{zip_col}" AS TEXT) ~ '^10[0-9]{3}$|^11[0-6][0-9]{2}$'
                         ORDER BY "{burden_col}" DESC
                         LIMIT 3;
                         """
@@ -683,16 +697,24 @@ def render_analysis_page():
                 # If values are < 1, convert from decimal to percentage
                 if burden_zip['rent_burden_rate'].max() < 1:
                     burden_zip['rent_burden_rate'] = burden_zip['rent_burden_rate'] * 100
-                burden_zip = burden_zip[burden_zip['rent_burden_rate'].notna()]
+                # Filter: only NYC ZIPs (100xx-116xx) and burden > 1% (exclude invalid data)
+                burden_zip = burden_zip[
+                    (burden_zip['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)) &
+                    (burden_zip['rent_burden_rate'].notna()) &
+                    (burden_zip['rent_burden_rate'] > 1)  # Exclude 1% which seems to be invalid
+                ]
                 
-                for _, row in burden_zip.iterrows():
-                    zipcode = str(row['zipcode']).strip()[:5]
-                    burden_val = float(row['rent_burden_rate'])
-                    results['highest_burden'].append({
-                        'zipcode': zipcode,
-                        'value': burden_val,
-                        'display': f"ZIP {zipcode} — {burden_val:.0f}%"
-                    })
+                if not burden_zip.empty:
+                    burden_zip = burden_zip.nlargest(3, 'rent_burden_rate')
+                    for _, row in burden_zip.iterrows():
+                        zipcode = str(row['zipcode']).strip()[:5]
+                        burden_val = float(row['rent_burden_rate'])
+                        if burden_val > 1:  # Double check
+                            results['highest_burden'].append({
+                                'zipcode': zipcode,
+                                'value': burden_val,
+                                'display': f"ZIP {zipcode} — {burden_val:.0f}%"
+                            })
         except Exception as e:
             st.warning(f"⚠️ Error fetching highest rent burden: {str(e)[:100]}")
         
@@ -808,10 +830,24 @@ def render_analysis_page():
                         income_df_merge['zipcode'] = income_df_merge['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
                         rent_df_merge['zipcode'] = rent_df_merge['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
                         
+                        # Filter to NYC ZIPs only
+                        income_df_merge = income_df_merge[
+                            income_df_merge['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)
+                        ]
+                        rent_df_merge = rent_df_merge[
+                            rent_df_merge['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)
+                        ]
+                        
                         merged = income_df_merge.merge(rent_df_merge, on='zipcode', how='inner')
                         merged['median_income'] = pd.to_numeric(merged['median_income'], errors='coerce')
                         merged['median_rent'] = pd.to_numeric(merged['median_rent'], errors='coerce')
-                        merged = merged[(merged['median_income'] > 0) & (merged['median_rent'] > 0)]
+                        # Filter: income > 0, rent > 0, and both are reasonable values
+                        merged = merged[
+                            (merged['median_income'] > 10000) &  # Minimum reasonable income
+                            (merged['median_rent'] > 500) &      # Minimum reasonable rent
+                            (merged['median_income'] < 500000) &  # Maximum reasonable income
+                            (merged['median_rent'] < 20000)      # Maximum reasonable rent
+                        ]
                         
                         # Calculate ratio: median_rent / (median_income / 12)
                         merged['rent_to_income'] = merged['median_rent'] / (merged['median_income'] / 12)
