@@ -604,11 +604,11 @@ def render_analysis_page():
                 income_zip['zipcode'] = income_zip['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
                 income_zip = income_zip[income_zip['zipcode'].notna()]
                 income_zip['median_income'] = pd.to_numeric(income_zip['median_income'], errors='coerce')
-                # Filter: only NYC ZIPs (100xx-116xx) and income > 0
+                # Filter: only NYC ZIPs (100xx-116xx) and income > 10000 (reasonable minimum)
                 income_zip = income_zip[
                     (income_zip['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)) &
                     (income_zip['median_income'].notna()) &
-                    (income_zip['median_income'] > 0)
+                    (income_zip['median_income'] > 10000)  # Minimum reasonable income
                 ]
                 
                 if not income_zip.empty:
@@ -616,7 +616,7 @@ def render_analysis_page():
                     for _, row in income_zip.iterrows():
                         zipcode = str(row['zipcode']).strip()[:5]
                         income_val = float(row['median_income'])
-                        if income_val > 0:  # Double check
+                        if income_val > 10000:  # Double check
                             results['lowest_income'].append({
                                 'zipcode': zipcode,
                                 'value': income_val,
@@ -697,11 +697,11 @@ def render_analysis_page():
                 # If values are < 1, convert from decimal to percentage
                 if burden_zip['rent_burden_rate'].max() < 1:
                     burden_zip['rent_burden_rate'] = burden_zip['rent_burden_rate'] * 100
-                # Filter: only NYC ZIPs (100xx-116xx) and burden > 1% (exclude invalid data)
+                # Filter: only NYC ZIPs (100xx-116xx) and burden > 5% (exclude invalid/too low data)
                 burden_zip = burden_zip[
                     (burden_zip['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)) &
                     (burden_zip['rent_burden_rate'].notna()) &
-                    (burden_zip['rent_burden_rate'] > 1)  # Exclude 1% which seems to be invalid
+                    (burden_zip['rent_burden_rate'] > 5)  # Exclude very low values that might be invalid
                 ]
                 
                 if not burden_zip.empty:
@@ -709,7 +709,7 @@ def render_analysis_page():
                     for _, row in burden_zip.iterrows():
                         zipcode = str(row['zipcode']).strip()[:5]
                         burden_val = float(row['rent_burden_rate'])
-                        if burden_val > 1:  # Double check
+                        if burden_val > 5:  # Double check
                             results['highest_burden'].append({
                                 'zipcode': zipcode,
                                 'value': burden_val,
@@ -867,12 +867,12 @@ def render_analysis_page():
         except Exception as e:
             st.warning(f"⚠️ Error calculating rent-to-income ratio: {str(e)[:100]}")
         
-        # Fill to 3 items if needed
+        # Fill to 3 items if needed - show "待填充" for rent-to-income ratio
         while len(results['highest_ratio']) < 3:
             results['highest_ratio'].append({
                 'zipcode': None,
                 'value': None,
-                'display': "Data unavailable"
+                'display': "待填充"
             })
         
         return results
