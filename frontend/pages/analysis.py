@@ -366,112 +366,224 @@ def get_coordinates_for_locations(df, location_col='zipcode'):
                 conn.close()
                 return df
             
-            # Use parameterized query to avoid SQL injection
-            placeholders = ','.join(['%s'] * len(zipcodes))
-            coord_query = f"""
-            SELECT DISTINCT 
-                postcode,
-                ST_Y(geom) AS latitude,
-                ST_X(geom) AS longitude
-            FROM rent_burden
-            WHERE postcode = ANY(%s)
-            AND geom IS NOT NULL
-            """
-            coord_df = pd.read_sql_query(coord_query, conn, params=(zipcodes,))
+            # Clean zipcodes to 5-digit format
+            zipcodes_clean = [str(z).strip()[:5] for z in zipcodes if str(z).strip()[:5].isdigit()]
+            if not zipcodes_clean:
+                conn.close()
+                return df
+            
+            # Try multiple approaches to get coordinates
+            coord_df = pd.DataFrame()
+            
+            # Approach 1: Try rent_burden table with postcode column
+            try:
+                coord_query = """
+                SELECT DISTINCT 
+                    postcode,
+                    ST_Y(geom) AS latitude,
+                    ST_X(geom) AS longitude
+                FROM rent_burden
+                WHERE postcode::text = ANY(%s)
+                AND geom IS NOT NULL
+                """
+                coord_df = pd.read_sql_query(coord_query, conn, params=(zipcodes_clean,))
+            except Exception:
+                pass
+            
+            # Approach 2: If no results, try with zipcode column name
+            if coord_df.empty:
+                try:
+                    coord_query = """
+                    SELECT DISTINCT 
+                        zipcode,
+                        ST_Y(geom) AS latitude,
+                        ST_X(geom) AS longitude
+                    FROM rent_burden
+                    WHERE zipcode::text = ANY(%s)
+                    AND geom IS NOT NULL
+                    """
+                    coord_df = pd.read_sql_query(coord_query, conn, params=(zipcodes_clean,))
+                    if not coord_df.empty:
+                        coord_df = coord_df.rename(columns={'zipcode': 'postcode'})
+                except Exception:
+                    pass
+            
+            # Approach 3: Try noah_zip_rentburden or other ZIP-level tables
+            if coord_df.empty:
+                try:
+                    # Check if we can get coordinates from any table with zipcode
+                    coord_query = """
+                    SELECT DISTINCT 
+                        zip_code,
+                        ST_Y(geom) AS latitude,
+                        ST_X(geom) AS longitude
+                    FROM noah_zip_rentburden
+                    WHERE zip_code::text = ANY(%s)
+                    AND geom IS NOT NULL
+                    """
+                    coord_df = pd.read_sql_query(coord_query, conn, params=(zipcodes_clean,))
+                    if not coord_df.empty:
+                        coord_df = coord_df.rename(columns={'zip_code': 'postcode'})
+                except Exception:
+                    pass
+            
             conn.close()
             
             if not coord_df.empty:
+                # Clean postcode to 5-digit format
                 coord_df['postcode'] = coord_df['postcode'].astype(str).str.extract(r'(\d{5})', expand=False)
-                df = df.merge(coord_df, left_on=location_col, right_on='postcode', how='left')
+                coord_df = coord_df[coord_df['postcode'].notna()]
+                
+                # Clean input zipcode to match
+                df['zipcode_clean'] = df[location_col].astype(str).str.extract(r'(\d{5})', expand=False)
+                
+                # Merge on cleaned zipcodes
+                df = df.merge(coord_df, left_on='zipcode_clean', right_on='postcode', how='left')
+                
+                # Drop temporary column
+                if 'zipcode_clean' in df.columns:
+                    df = df.drop(columns=['zipcode_clean'])
+                if 'postcode' in df.columns and 'zipcode' in df.columns:
+                    df = df.drop(columns=['postcode'])
         
         return df
     except Exception as e:
-        st.warning(f"⚠️ Could not fetch coordinates: {str(e)[:100]}")
+        st.warning(f"⚠️ Could not fetch coordinates: {str(e)[:200]}")
+        import traceback
+        st.code(traceback.format_exc()[:500])
         return df
 
 def render_map_visualization(df, value_col, title, reverse=False, location_col='zipcode'):
     """Render a map visualization with color coding"""
-    if df.empty or value_col not in df.columns:
-        st.warning(f"⚠️ No data available for {title}")
-        return None
-    
-    # Filter out invalid data
-    map_df = df[[value_col, location_col]].dropna(subset=[value_col, location_col]).copy()
-    
-    if map_df.empty:
-        st.warning(f"⚠️ No valid data for {title}")
-        return None
-    
-    # Get coordinates
-    map_df = get_coordinates_for_locations(map_df, location_col)
-    
-    # If we have coordinates, create a scatter map
-    if 'latitude' in map_df.columns and 'longitude' in map_df.columns:
-        map_df = map_df[map_df['latitude'].notna() & map_df['longitude'].notna()].copy()
+    try:
+        if df.empty or value_col not in df.columns:
+            st.warning(f"⚠️ No data available for {title}")
+            return None
         
-        if not map_df.empty:
-            # Create color scale
-            colors = create_color_scale(map_df[value_col], reverse=reverse)
-            map_df['color'] = colors
+        # Check if location_col exists
+        if location_col not in df.columns:
+            st.warning(f"⚠️ Location column '{location_col}' not found in data")
+            return None
+        
+        # Filter out invalid data
+        map_df = df[[value_col, location_col]].dropna(subset=[value_col, location_col]).copy()
+        
+        if map_df.empty:
+            st.warning(f"⚠️ No valid data for {title}")
+            return None
+        
+        # Get coordinates
+        map_df = get_coordinates_for_locations(map_df, location_col)
+        
+        # If we have coordinates, create a scatter map
+        if 'latitude' in map_df.columns and 'longitude' in map_df.columns:
+            map_df = map_df[map_df['latitude'].notna() & map_df['longitude'].notna()].copy()
             
-            # Create PyDeck map
-            center_lat = map_df['latitude'].mean()
-            center_lon = map_df['longitude'].mean()
-            
-            # Convert colors to RGB
-            def hex_to_rgb(hex_color):
-                hex_color = hex_color.lstrip('#')
-                return [int(hex_color[i:i+2], 16) for i in (0, 2, 4)] + [180]
-            
-            map_df['color_rgb'] = map_df['color'].apply(hex_to_rgb)
-            
-            # Format value for tooltip
-            if 'rent' in value_col.lower() or 'income' in value_col.lower():
-                map_df['value_display'] = map_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
-            elif 'ratio' in value_col.lower():
-                map_df['value_display'] = map_df[value_col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-            else:
-                map_df['value_display'] = map_df[value_col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
-            
-            layer = pdk.Layer(
-                "ScatterplotLayer",
-                data=map_df.to_dict('records'),
-                get_position="[longitude, latitude]",
-                get_radius=150,
-                radius_min_pixels=8,
-                radius_max_pixels=60,
-                get_fill_color="color_rgb",
-                pickable=True,
-            )
-            
-            # Ensure tooltip fields exist
-            if 'area_name' not in map_df.columns:
-                if location_col in map_df.columns:
-                    map_df['area_name'] = map_df[location_col]
+            if not map_df.empty:
+                # Create color scale
+                try:
+                    colors = create_color_scale(map_df[value_col], reverse=reverse)
+                    if len(colors) != len(map_df):
+                        st.warning(f"⚠️ Color scale length mismatch. Using default colors.")
+                        colors = ['#d73027'] * len(map_df)  # Default red
+                    map_df['color'] = colors
+                except Exception as e:
+                    st.warning(f"⚠️ Error creating color scale: {str(e)[:100]}")
+                    map_df['color'] = '#d73027'  # Default red
+                
+                # Create PyDeck map
+                center_lat = float(map_df['latitude'].mean())
+                center_lon = float(map_df['longitude'].mean())
+                
+                # Convert colors to RGB with error handling
+                def hex_to_rgb(hex_color):
+                    try:
+                        if isinstance(hex_color, str):
+                            hex_color = hex_color.lstrip('#')
+                            if len(hex_color) == 6:
+                                return [int(hex_color[i:i+2], 16) for i in (0, 2, 4)] + [180]
+                        # Default to red if invalid
+                        return [215, 48, 39, 180]  # Red default
+                    except Exception:
+                        return [215, 48, 39, 180]  # Red default
+                
+                map_df['color_rgb'] = map_df['color'].apply(hex_to_rgb)
+                
+                # Format value for tooltip
+                if 'rent' in value_col.lower() and 'burden' not in value_col.lower() and 'income' not in value_col.lower():
+                    map_df['value_display'] = map_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+                elif 'income' in value_col.lower():
+                    map_df['value_display'] = map_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+                elif 'ratio' in value_col.lower():
+                    map_df['value_display'] = map_df[value_col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
                 else:
-                    map_df['area_name'] = 'N/A'
-            
-            tooltip = {
-                "html": "<b>Location:</b> {area_name}<br/><b>" + title + ":</b> {value_display}",
-                "style": {"backgroundColor": "#262730", "color": "white"},
-            }
-            
-            view_state = pdk.ViewState(
-                latitude=center_lat,
-                longitude=center_lon,
-                zoom=11,
-                pitch=0
-            )
-            
-            return pdk.Deck(
-                layers=[layer],
-                initial_view_state=view_state,
-                tooltip=tooltip,
-                map_style='mapbox://styles/mapbox/light-v9'
-            )
-    
-    # Fallback: show data table if no coordinates
-    return None
+                    map_df['value_display'] = map_df[value_col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+                
+                # Ensure tooltip fields exist
+                if 'area_name' not in map_df.columns:
+                    if location_col in map_df.columns:
+                        map_df['area_name'] = map_df[location_col].astype(str)
+                    else:
+                        map_df['area_name'] = 'N/A'
+                
+                # Convert DataFrame to list of dicts, ensuring all values are JSON-serializable
+                map_data = []
+                for _, row in map_df.iterrows():
+                    try:
+                        record = {
+                            'longitude': float(row['longitude']) if pd.notna(row['longitude']) else None,
+                            'latitude': float(row['latitude']) if pd.notna(row['latitude']) else None,
+                            'color_rgb': row['color_rgb'] if isinstance(row['color_rgb'], list) else [215, 48, 39, 180],
+                            'area_name': str(row.get('area_name', 'N/A')),
+                            'value_display': str(row.get('value_display', 'N/A'))
+                        }
+                        # Only add if coordinates are valid
+                        if record['longitude'] is not None and record['latitude'] is not None:
+                            map_data.append(record)
+                    except Exception:
+                        continue
+                
+                if not map_data:
+                    st.warning(f"⚠️ No valid coordinate data for {title}")
+                    return None
+                
+                layer = pdk.Layer(
+                    "ScatterplotLayer",
+                    data=map_data,
+                    get_position="[longitude, latitude]",
+                    get_radius=150,
+                    radius_min_pixels=8,
+                    radius_max_pixels=60,
+                    get_fill_color="color_rgb",
+                    pickable=True,
+                )
+                
+                tooltip = {
+                    "html": "<b>Location:</b> {area_name}<br/><b>" + title + ":</b> {value_display}",
+                    "style": {"backgroundColor": "#262730", "color": "white"},
+                }
+                
+                view_state = pdk.ViewState(
+                    latitude=center_lat,
+                    longitude=center_lon,
+                    zoom=11,
+                    pitch=0
+                )
+                
+                return pdk.Deck(
+                    layers=[layer],
+                    initial_view_state=view_state,
+                    tooltip=tooltip,
+                    map_style='mapbox://styles/mapbox/light-v9'
+                )
+        
+        # Fallback: show data table if no coordinates
+        return None
+    except Exception as e:
+        st.error(f"❌ Error rendering map: {str(e)[:200]}")
+        import traceback
+        st.code(traceback.format_exc())
+        return None
 
 def render_analysis_page():
     """Render the analysis page"""
