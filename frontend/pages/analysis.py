@@ -585,22 +585,30 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             st.warning(f"⚠️ Location column '{location_col}' not found in data")
             return None
         
-        # Filter out invalid data
-        map_df = df[[value_col, location_col]].dropna(subset=[value_col, location_col]).copy()
+        # Filter out invalid data - keep all columns for now
+        map_df = df.dropna(subset=[value_col, location_col]).copy()
         
         if map_df.empty:
             st.warning(f"⚠️ No valid data for {title}")
             return None
         
-        # Get coordinates
+        # Ensure we have the required columns
+        if value_col not in map_df.columns:
+            st.warning(f"⚠️ Value column '{value_col}' not found. Available columns: {list(map_df.columns)}")
+            return None
+        if location_col not in map_df.columns:
+            st.warning(f"⚠️ Location column '{location_col}' not found. Available columns: {list(map_df.columns)}")
+            return None
+        
+        # Get coordinates - this may add latitude/longitude columns
         map_df = get_coordinates_for_locations(map_df, location_col)
         
         # Ensure value_col and location_col still exist after coordinate merge
         if value_col not in map_df.columns:
-            st.warning(f"⚠️ Value column '{value_col}' lost after coordinate merge")
+            st.warning(f"⚠️ Value column '{value_col}' lost after coordinate merge. Available: {list(map_df.columns)}")
             return None
         if location_col not in map_df.columns:
-            st.warning(f"⚠️ Location column '{location_col}' lost after coordinate merge")
+            st.warning(f"⚠️ Location column '{location_col}' lost after coordinate merge. Available: {list(map_df.columns)}")
             return None
         
         # If we have coordinates, create a scatter map
@@ -648,8 +656,19 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                     map_df['color'] = '#808080'  # Default gray
                 
                 # Create PyDeck map
-                center_lat = float(map_df['latitude'].mean())
-                center_lon = float(map_df['longitude'].mean())
+                # Ensure we have valid coordinates for center
+                valid_coords = map_df[['latitude', 'longitude']].dropna()
+                if valid_coords.empty:
+                    st.warning(f"⚠️ No valid coordinates for {title}")
+                    return None
+                
+                center_lat = float(valid_coords['latitude'].mean())
+                center_lon = float(valid_coords['longitude'].mean())
+                
+                # Validate center coordinates
+                if pd.isna(center_lat) or pd.isna(center_lon):
+                    st.warning(f"⚠️ Invalid center coordinates for {title}")
+                    return None
                 
                 # Convert colors to RGB with error handling
                 def hex_to_rgb(hex_color):
@@ -1285,30 +1304,93 @@ def render_analysis_page():
         st.markdown("---")
         st.subheader("📉 Rent-to-Income Ratio Map")
         st.markdown("**Color Legend:** 🟢 Green = Lower Ratio (Better) | 🔴 Red = Higher Ratio (Worse)")
-        if bedroom_type != "All" and not rent_df.empty and not income_df.empty:
-            bed_col = f'rent_{bedroom_type.lower().replace("+", "")}'
-            if bed_col in rent_df.columns:
-                # Merge and calculate ratio
-                merged = rent_df.merge(income_df, on='zipcode', how='inner', suffixes=('_rent', '_income'))
-                if 'median_income' in merged.columns and merged['median_income'].notna().any():
-                    merged['rent_to_income'] = merged[bed_col] / merged['median_income']
-                    merged = merged[merged['rent_to_income'].notna() & (merged['rent_to_income'] > 0)]
-                    if not merged.empty:
-                        map_obj = render_map_visualization(merged, 'rent_to_income', "Rent-to-Income Ratio", reverse_color=False)
-                        if map_obj:
-                            st.pydeck_chart(map_obj, use_container_width=True)
+        
+        # Fetch rent-to-income ratio data from zip_rent_income_ratio table
+        try:
+            conn = get_db_connection()
+            
+            # Find zip_rent_income_ratio table
+            table_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND (table_name = 'zip_rent_income_ratio' OR table_name LIKE '%rent%income%ratio%')
+            ORDER BY 
+                CASE 
+                    WHEN table_name = 'zip_rent_income_ratio' THEN 1
+                    ELSE 2
+                END,
+                table_name
+            LIMIT 1;
+            """
+            tables_df = pd.read_sql_query(table_query, conn)
+            
+            if not tables_df.empty:
+                ratio_table = tables_df.iloc[0]['table_name']
+                
+                # Get column names
+                col_query = f"""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = '{ratio_table}'
+                ORDER BY ordinal_position;
+                """
+                cols_df = pd.read_sql_query(col_query, conn)
+                column_names = cols_df['column_name'].tolist()
+                
+                # Find zip and ratio columns
+                zip_col = None
+                for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code']:
+                    if col in column_names:
+                        zip_col = col
+                        break
+                
+                ratio_col = None
+                for col in ['rent_to_income_ratio', 'rent_income_ratio', 'ratio', 'rent_to_income']:
+                    if col in column_names:
+                        ratio_col = col
+                        break
+                
+                if zip_col and ratio_col:
+                    query = f"""
+                    SELECT "{zip_col}" as zipcode, "{ratio_col}" as rent_to_income
+                    FROM {ratio_table}
+                    WHERE "{zip_col}" IS NOT NULL AND "{ratio_col}" IS NOT NULL;
+                    """
+                    ratio_df = pd.read_sql_query(query, conn)
+                    conn.close()
+                    
+                    if not ratio_df.empty:
+                        ratio_df['zipcode'] = ratio_df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                        ratio_df = ratio_df[ratio_df['zipcode'].notna()]
+                        ratio_df['rent_to_income'] = pd.to_numeric(ratio_df['rent_to_income'], errors='coerce')
+                        ratio_df = ratio_df[ratio_df['rent_to_income'].notna() & (ratio_df['rent_to_income'] > 0)]
+                        
+                        # Filter to NYC ZIPs
+                        ratio_df = ratio_df[ratio_df['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)]
+                        
+                        if not ratio_df.empty:
+                            map_obj = render_map_visualization(ratio_df, 'rent_to_income', "Rent-to-Income Ratio", reverse_color=False)
+                            if map_obj:
+                                st.pydeck_chart(map_obj, use_container_width=True)
+                            else:
+                                st.info("Map visualization requires coordinate data. Showing data table instead.")
+                                display_df = ratio_df[['rent_to_income', 'zipcode']].sort_values('rent_to_income', ascending=False)
+                                st.dataframe(display_df.head(20), use_container_width=True)
                         else:
-                            st.info("Map visualization requires coordinate data. Showing data table instead.")
-                            display_df = merged[['rent_to_income', 'zipcode', 'area_name']].sort_values('rent_to_income', ascending=False)
-                            st.dataframe(display_df.head(20), use_container_width=True)
+                            st.warning("⚠️ No valid rent-to-income ratio data after filtering.")
                     else:
-                        st.warning("⚠️ No valid rent-to-income ratio data after calculation.")
+                        st.warning("⚠️ No data found in rent-to-income ratio table.")
                 else:
-                    st.warning("⚠️ Could not calculate rent-to-income ratio (missing income data).")
+                    conn.close()
+                    st.warning(f"⚠️ Could not find zip or ratio columns in {ratio_table}")
             else:
-                st.warning(f"⚠️ No {bedroom_type} rent data available.")
-        else:
-            st.warning("⚠️ Please select a bedroom type to view rent-to-income ratio map.")
+                conn.close()
+                st.warning("⚠️ Table `zip_rent_income_ratio` not found. Please ensure the table exists in your database.")
+        except Exception as e:
+            st.warning(f"⚠️ Could not fetch rent-to-income ratio data: {str(e)[:200]}")
+            import traceback
+            st.code(traceback.format_exc()[:500])
 
 if __name__ == "__main__":
     render_analysis_page()
