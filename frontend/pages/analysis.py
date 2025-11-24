@@ -9,6 +9,7 @@ import pydeck as pdk
 import psycopg2
 import plotly.express as px
 import plotly.graph_objects as go
+import json
 
 # Set page config
 st.set_page_config(
@@ -474,143 +475,36 @@ def create_color_scale(values, reverse=False):
     
     return colors
 
-def get_coordinates_for_locations(df, location_col='zipcode'):
-    """Get coordinates for locations from database"""
+@st.cache_data(show_spinner=False, ttl=3600)
+def load_zip_shapes():
+    """Load ZIP code shapes from zip_shapes_geojson table"""
     try:
         conn = get_db_connection()
+        query = """
+        SELECT zip_code, geojson
+        FROM zip_shapes_geojson
+        WHERE zip_code IS NOT NULL AND geojson IS NOT NULL;
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
         
-        if location_col == 'zipcode':
-            # Get coordinates by zipcode from rent_burden table
-            zipcodes = df[location_col].dropna().unique().tolist()
-            if not zipcodes:
-                conn.close()
-                return df
-            
-            # Clean zipcodes to 5-digit format
-            zipcodes_clean = [str(z).strip()[:5] for z in zipcodes if str(z).strip()[:5].isdigit()]
-            if not zipcodes_clean:
-                conn.close()
-                return df
-            
-            # Try multiple approaches to get coordinates
-            coord_df = pd.DataFrame()
-            
-            # Approach 1: Try rent_burden table with postcode column
-            try:
-                coord_query = """
-                SELECT DISTINCT 
-                    postcode,
-                    ST_Y(geom) AS latitude,
-                    ST_X(geom) AS longitude
-                FROM rent_burden
-                WHERE postcode::text = ANY(%s)
-                AND geom IS NOT NULL
-                """
-                coord_df = pd.read_sql_query(coord_query, conn, params=(zipcodes_clean,))
-            except Exception:
-                pass
-            
-            # Approach 2: If no results, try with zipcode column name
-            if coord_df.empty:
-                try:
-                    coord_query = """
-                    SELECT DISTINCT 
-                        zipcode,
-                        ST_Y(geom) AS latitude,
-                        ST_X(geom) AS longitude
-                    FROM rent_burden
-                    WHERE zipcode::text = ANY(%s)
-                    AND geom IS NOT NULL
-                    """
-                    coord_df = pd.read_sql_query(coord_query, conn, params=(zipcodes_clean,))
-                    if not coord_df.empty:
-                        coord_df = coord_df.rename(columns={'zipcode': 'postcode'})
-                except Exception:
-                    pass
-            
-            # Approach 3: Try noah_zip_rentburden or other ZIP-level tables
-            if coord_df.empty:
-                try:
-                    # Check if we can get coordinates from any table with zipcode
-                    coord_query = """
-                    SELECT DISTINCT 
-                        zip_code,
-                        ST_Y(geom) AS latitude,
-                        ST_X(geom) AS longitude
-                    FROM noah_zip_rentburden
-                    WHERE zip_code::text = ANY(%s)
-                    AND geom IS NOT NULL
-                    """
-                    coord_df = pd.read_sql_query(coord_query, conn, params=(zipcodes_clean,))
-                    if not coord_df.empty:
-                        coord_df = coord_df.rename(columns={'zip_code': 'postcode'})
-                except Exception:
-                    pass
-            
-            # Approach 4: Try zip_median_rent table
-            if coord_df.empty:
-                try:
-                    coord_query = """
-                    SELECT DISTINCT 
-                        zipcode,
-                        ST_Y(geom) AS latitude,
-                        ST_X(geom) AS longitude
-                    FROM zip_median_rent
-                    WHERE zipcode::text = ANY(%s)
-                    AND geom IS NOT NULL
-                    """
-                    coord_df = pd.read_sql_query(coord_query, conn, params=(zipcodes_clean,))
-                    if not coord_df.empty:
-                        coord_df = coord_df.rename(columns={'zipcode': 'postcode'})
-                except Exception:
-                    pass
-            
-            # Approach 5: Try zip_median_income table
-            if coord_df.empty:
-                try:
-                    coord_query = """
-                    SELECT DISTINCT 
-                        zipcode,
-                        ST_Y(geom) AS latitude,
-                        ST_X(geom) AS longitude
-                    FROM zip_median_income
-                    WHERE zipcode::text = ANY(%s)
-                    AND geom IS NOT NULL
-                    """
-                    coord_df = pd.read_sql_query(coord_query, conn, params=(zipcodes_clean,))
-                    if not coord_df.empty:
-                        coord_df = coord_df.rename(columns={'zipcode': 'postcode'})
-                except Exception:
-                    pass
-            
-            conn.close()
-            
-            if not coord_df.empty:
-                # Clean postcode to 5-digit format
-                coord_df['postcode'] = coord_df['postcode'].astype(str).str.extract(r'(\d{5})', expand=False)
-                coord_df = coord_df[coord_df['postcode'].notna()]
-                
-                # Clean input zipcode to match
-                df['zipcode_clean'] = df[location_col].astype(str).str.extract(r'(\d{5})', expand=False)
-                
-                # Merge on cleaned zipcodes
-                df = df.merge(coord_df, left_on='zipcode_clean', right_on='postcode', how='left')
-                
-                # Drop temporary column
-                if 'zipcode_clean' in df.columns:
-                    df = df.drop(columns=['zipcode_clean'])
-                if 'postcode' in df.columns and 'zipcode' in df.columns:
-                    df = df.drop(columns=['postcode'])
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Clean zip_code to 5-digit format
+        df['zip_code'] = df['zip_code'].astype(str).str.extract(r'(\d{5})', expand=False)
+        df = df[df['zip_code'].notna()]
+        
+        # Parse GeoJSON text into Python dict
+        df['json_obj'] = df['geojson'].apply(json.loads)
         
         return df
     except Exception as e:
-        st.warning(f"⚠️ Could not fetch coordinates: {str(e)[:200]}")
-        import traceback
-        st.code(traceback.format_exc()[:500])
-        return df
+        st.warning(f"⚠️ Could not load ZIP shapes: {str(e)[:200]}")
+        return pd.DataFrame()
 
 def render_map_visualization(df, value_col, title, reverse=False, location_col='zipcode'):
-    """Render a map visualization with color coding"""
+    """Render a ZIP-level map visualization using GeoJSON shapes"""
     try:
         if df.empty or value_col not in df.columns:
             st.warning(f"⚠️ No data available for {title}")
@@ -621,175 +515,150 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             st.warning(f"⚠️ Location column '{location_col}' not found in data")
             return None
         
-        # Filter out invalid data - keep all columns for now
+        # Filter out invalid data
         map_df = df.dropna(subset=[value_col, location_col]).copy()
         
         if map_df.empty:
             st.warning(f"⚠️ No valid data for {title}")
             return None
         
-        # Ensure we have the required columns
-        if value_col not in map_df.columns:
-            st.warning(f"⚠️ Value column '{value_col}' not found. Available columns: {list(map_df.columns)}")
-            return None
-        if location_col not in map_df.columns:
-            st.warning(f"⚠️ Location column '{location_col}' not found. Available columns: {list(map_df.columns)}")
+        # Clean zipcode to 5-digit format
+        map_df['zipcode_clean'] = map_df[location_col].astype(str).str.extract(r'(\d{5})', expand=False)
+        map_df = map_df[map_df['zipcode_clean'].notna()]
+        
+        if map_df.empty:
+            st.warning(f"⚠️ No valid ZIP codes for {title}")
             return None
         
-        # Get coordinates - this may add latitude/longitude columns
-        map_df = get_coordinates_for_locations(map_df, location_col)
-        
-        # Ensure value_col and location_col still exist after coordinate merge
-        if value_col not in map_df.columns:
-            st.warning(f"⚠️ Value column '{value_col}' lost after coordinate merge. Available: {list(map_df.columns)}")
-            return None
-        if location_col not in map_df.columns:
-            st.warning(f"⚠️ Location column '{location_col}' lost after coordinate merge. Available: {list(map_df.columns)}")
+        # Load ZIP shapes
+        zip_shapes = load_zip_shapes()
+        if zip_shapes.empty:
+            st.warning("⚠️ Could not load ZIP code shapes from database")
             return None
         
-        # If we have coordinates, create a scatter map
-        if 'latitude' in map_df.columns and 'longitude' in map_df.columns:
-            map_df = map_df[map_df['latitude'].notna() & map_df['longitude'].notna()].copy()
+        # Merge data with GeoJSON shapes
+        merged_df = map_df.merge(
+            zip_shapes[['zip_code', 'json_obj']],
+            left_on='zipcode_clean',
+            right_on='zip_code',
+            how='inner'
+        )
+        
+        if merged_df.empty:
+            st.warning(f"⚠️ No matching ZIP shapes found for {title}")
+            return None
+        
+        # Create color scale based on values
+        try:
+            value_series = pd.to_numeric(merged_df[value_col], errors='coerce')
+            valid_mask = value_series.notna()
             
-            if not map_df.empty:
-                # Ensure value_col still exists after filtering
-                if value_col not in map_df.columns:
-                    st.warning(f"⚠️ Value column '{value_col}' not found after filtering")
-                    return None
+            if not valid_mask.any():
+                st.warning(f"⚠️ No valid numeric values in '{value_col}' column")
+                return None
+            
+            # Create colors for all rows
+            colors = ['#808080'] * len(merged_df)  # Default gray
+            
+            # Create color scale for valid values
+            if valid_mask.sum() > 0:
+                valid_values = value_series[valid_mask]
+                valid_colors = create_color_scale(valid_values, reverse=reverse)
                 
-                # Create color scale
+                # Assign colors to valid rows
+                valid_positions = [i for i, is_valid in enumerate(valid_mask) if is_valid]
+                for pos_idx, color in zip(valid_positions, valid_colors):
+                    if pos_idx < len(colors):
+                        colors[pos_idx] = color
+            
+            merged_df['color'] = colors
+            
+            # Convert hex colors to RGB
+            def hex_to_rgb(hex_color):
                 try:
-                    value_series = map_df[value_col].copy()
-                    # Ensure we have valid numeric values
-                    value_series = pd.to_numeric(value_series, errors='coerce')
-                    
-                    # Create a mask for valid values
-                    valid_mask = value_series.notna()
-                    
-                    if not valid_mask.any():
-                        st.warning(f"⚠️ No valid numeric values in '{value_col}' column")
-                        return None
-                    
-                    # Create colors for all rows
-                    colors = ['#808080'] * len(map_df)  # Default gray for all
-                    
-                    # Only create color scale for valid values
-                    if valid_mask.sum() > 0:
-                        valid_values = value_series[valid_mask]
-                        valid_colors = create_color_scale(valid_values, reverse=reverse)
-                        
-                        # Assign colors to valid rows using positional index
-                        valid_positions = [i for i, is_valid in enumerate(valid_mask) if is_valid]
-                        for pos_idx, color in zip(valid_positions, valid_colors):
-                            if pos_idx < len(colors):
-                                colors[pos_idx] = color
-                    
-                    map_df['color'] = colors
-                except Exception as e:
-                    st.warning(f"⚠️ Error creating color scale: {str(e)[:200]}")
-                    import traceback
-                    st.code(traceback.format_exc()[:300])
-                    map_df['color'] = '#808080'  # Default gray
-                
-                # Create PyDeck map
-                # Ensure we have valid coordinates for center
-                valid_coords = map_df[['latitude', 'longitude']].dropna()
-                if valid_coords.empty:
-                    st.warning(f"⚠️ No valid coordinates for {title}")
-                    return None
-                
-                center_lat = float(valid_coords['latitude'].mean())
-                center_lon = float(valid_coords['longitude'].mean())
-                
-                # Validate center coordinates
-                if pd.isna(center_lat) or pd.isna(center_lon):
-                    st.warning(f"⚠️ Invalid center coordinates for {title}")
-                    return None
-                
-                # Convert colors to RGB with error handling
-                def hex_to_rgb(hex_color):
-                    try:
-                        if isinstance(hex_color, str):
-                            hex_color = hex_color.lstrip('#')
-                            if len(hex_color) == 6:
-                                return [int(hex_color[i:i+2], 16) for i in (0, 2, 4)] + [180]
-                        # Default to red if invalid
-                        return [215, 48, 39, 180]  # Red default
-                    except Exception:
-                        return [215, 48, 39, 180]  # Red default
-                
-                map_df['color_rgb'] = map_df['color'].apply(hex_to_rgb)
-                
-                # Format value for tooltip
-                if 'rent' in value_col.lower() and 'burden' not in value_col.lower() and 'income' not in value_col.lower():
-                    map_df['value_display'] = map_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
-                elif 'income' in value_col.lower():
-                    map_df['value_display'] = map_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
-                elif 'ratio' in value_col.lower():
-                    map_df['value_display'] = map_df[value_col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-                else:
-                    map_df['value_display'] = map_df[value_col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
-                
-                # Ensure tooltip fields exist
-                if 'area_name' not in map_df.columns:
-                    if location_col in map_df.columns:
-                        map_df['area_name'] = map_df[location_col].astype(str)
-                    else:
-                        map_df['area_name'] = 'N/A'
-                
-                # Convert DataFrame to list of dicts, ensuring all values are JSON-serializable
-                map_data = []
-                for _, row in map_df.iterrows():
-                    try:
-                        record = {
-                            'longitude': float(row['longitude']) if pd.notna(row['longitude']) else None,
-                            'latitude': float(row['latitude']) if pd.notna(row['latitude']) else None,
-                            'color_rgb': row['color_rgb'] if isinstance(row['color_rgb'], list) else [215, 48, 39, 180],
-                            'area_name': str(row.get('area_name', 'N/A')),
-                            'value_display': str(row.get('value_display', 'N/A'))
-                        }
-                        # Only add if coordinates are valid
-                        if record['longitude'] is not None and record['latitude'] is not None:
-                            map_data.append(record)
-                    except Exception:
-                        continue
-                
-                if not map_data:
-                    st.warning(f"⚠️ No valid coordinate data for {title}")
-                    return None
-                
-                layer = pdk.Layer(
-                    "ScatterplotLayer",
-                    data=map_data,
-                    get_position="[longitude, latitude]",
-                    get_radius=150,
-                    radius_min_pixels=8,
-                    radius_max_pixels=60,
-                    get_fill_color="color_rgb",
-                    pickable=True,
-                )
-                
-                tooltip = {
-                    "html": "<b>Location:</b> {area_name}<br/><b>" + title + ":</b> {value_display}",
-                    "style": {"backgroundColor": "#262730", "color": "white"},
-                }
-                
-                view_state = pdk.ViewState(
-                    latitude=center_lat,
-                    longitude=center_lon,
-                    zoom=11,
-                    pitch=0
-                )
-                
-                return pdk.Deck(
-                    layers=[layer],
-                    initial_view_state=view_state,
-                    tooltip=tooltip,
-                    map_style='mapbox://styles/mapbox/light-v9'
-                )
+                    if isinstance(hex_color, str):
+                        hex_color = hex_color.lstrip('#')
+                        if len(hex_color) == 6:
+                            return [int(hex_color[i:i+2], 16) for i in (0, 2, 4)] + [180]
+                    return [128, 128, 128, 180]  # Default gray
+                except Exception:
+                    return [128, 128, 128, 180]  # Default gray
+            
+            merged_df['color_rgb'] = merged_df['color'].apply(hex_to_rgb)
+            
+        except Exception as e:
+            st.warning(f"⚠️ Error creating color scale: {str(e)[:200]}")
+            merged_df['color_rgb'] = [[128, 128, 128, 180]] * len(merged_df)
         
-        # Fallback: show data table if no coordinates
-        return None
+        # Format value for tooltip
+        if 'rent' in value_col.lower() and 'burden' not in value_col.lower() and 'income' not in value_col.lower():
+            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+        elif 'income' in value_col.lower():
+            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+        elif 'ratio' in value_col.lower():
+            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+        else:
+            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+        
+        # Prepare GeoJSON features with properties for tooltip and color
+        geojson_features = []
+        for idx, row in merged_df.iterrows():
+            try:
+                # Get the GeoJSON feature
+                geojson_feat = row['json_obj']
+                
+                # Ensure it's a Feature object
+                if isinstance(geojson_feat, dict):
+                    # Add properties for tooltip and color
+                    if 'properties' not in geojson_feat:
+                        geojson_feat['properties'] = {}
+                    
+                    geojson_feat['properties']['zipcode'] = str(row.get('zipcode_clean', 'N/A'))
+                    geojson_feat['properties']['value_display'] = str(row.get('value_display', 'N/A'))
+                    geojson_feat['properties']['color_rgb'] = row['color_rgb']
+                    
+                    geojson_features.append(geojson_feat)
+            except Exception:
+                continue
+        
+        if not geojson_features:
+            st.warning(f"⚠️ No valid GeoJSON features for {title}")
+            return None
+        
+        # Create GeoJSON layer
+        layer = pdk.Layer(
+            "GeoJsonLayer",
+            data=geojson_features,
+            pickable=True,
+            stroked=True,
+            filled=True,
+            get_fill_color="properties.color_rgb",
+            get_line_color=[255, 255, 255],
+            line_width_min_pixels=1,
+            opacity=0.8,
+        )
+        
+        # Create tooltip
+        tooltip = {
+            "html": "<b>ZIP Code:</b> {properties.zipcode}<br/><b>" + title + ":</b> {properties.value_display}",
+            "style": {"backgroundColor": "#262730", "color": "white"},
+        }
+        
+        # Use NYC-centered view state
+        view_state = pdk.ViewState(
+            latitude=40.7,
+            longitude=-73.95,
+            zoom=9,
+            pitch=0
+        )
+        
+        return pdk.Deck(
+            layers=[layer],
+            initial_view_state=view_state,
+            tooltip=tooltip,
+            map_style='mapbox://styles/mapbox/light-v9'
+        )
+        
     except Exception as e:
         st.error(f"❌ Error rendering map: {str(e)[:200]}")
         import traceback
@@ -1113,18 +982,14 @@ def render_analysis_page():
                 map_obj = render_map_visualization(rent_df, bed_col, f"Median Rent ({bedroom_type})", reverse=True)
                 if map_obj:
                     st.pydeck_chart(map_obj, use_container_width=True)
-                else:
-                    st.info("Map visualization requires coordinate data. Showing data table instead.")
-                    # Only select columns that exist
+                    
+                    # Add CSV download button below map
                     display_cols = [bed_col, 'zipcode']
                     if 'area_name' in rent_df.columns:
                         display_cols.append('area_name')
                     if 'borough' in rent_df.columns:
                         display_cols.append('borough')
                     display_df = rent_df[display_cols].dropna(subset=[bed_col]).sort_values(bed_col)
-                    st.dataframe(display_df.head(20), use_container_width=True)
-                    
-                    # Add CSV download button
                     csv = display_df.to_csv(index=False)
                     st.download_button(
                         label="📥 Download Data as CSV",
@@ -1132,6 +997,8 @@ def render_analysis_page():
                         file_name=f"median_rent_{bedroom_type.lower()}.csv",
                         mime="text/csv"
                     )
+                else:
+                    st.error(f"❌ Failed to render map for Median Rent ({bedroom_type}). Please check data and ZIP shapes.")
             else:
                 st.warning(f"⚠️ No {bedroom_type} rent data available.")
         else:
@@ -1148,17 +1015,23 @@ def render_analysis_page():
             map_obj = render_map_visualization(income_df, 'median_income', "Median Income", reverse=True)
             if map_obj:
                 st.pydeck_chart(map_obj, use_container_width=True)
-            else:
-                st.info("Map visualization requires coordinate data. Showing data table instead.")
-                # Try to include area_name and borough if available
+                
+                # Add CSV download button below map
                 display_cols = ['median_income', 'zipcode']
                 if 'area_name' in income_df.columns:
                     display_cols.append('area_name')
                 if 'borough' in income_df.columns:
                     display_cols.append('borough')
-                
                 display_df = income_df[display_cols].dropna(subset=['median_income']).sort_values('median_income')
-                st.dataframe(display_df.head(20), use_container_width=True)
+                csv = display_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Data as CSV",
+                    data=csv,
+                    file_name="median_income.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.error("❌ Failed to render median income map. Please check data and ZIP shapes.")
         else:
             st.warning("⚠️ No median income data available.")
             st.info("💡 **Troubleshooting:**")
@@ -1176,10 +1049,18 @@ def render_analysis_page():
             map_obj = render_map_visualization(burden_df, 'rent_burden_rate', "Rent Burden Rate", reverse=False)
             if map_obj:
                 st.pydeck_chart(map_obj, use_container_width=True)
-            else:
-                st.info("Map visualization requires coordinate data. Showing data table instead.")
+                
+                # Add CSV download button below map
                 display_df = burden_df[['rent_burden_rate', 'zipcode']].dropna(subset=['rent_burden_rate']).sort_values('rent_burden_rate', ascending=False)
-                st.dataframe(display_df.head(20), use_container_width=True)
+                csv = display_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Data as CSV",
+                    data=csv,
+                    file_name="rent_burden_rate.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.error("❌ Failed to render rent burden map. Please check data and ZIP shapes.")
         else:
             st.warning("⚠️ No rent burden data available.")
     
@@ -1262,12 +1143,9 @@ def render_analysis_page():
                             map_obj = render_map_visualization(ratio_df, 'rent_to_income', f"Rent-to-Income Ratio ({bedroom_type})", reverse=False)
                             if map_obj:
                                 st.pydeck_chart(map_obj, use_container_width=True)
-                            else:
-                                st.info("Map visualization requires coordinate data. Showing data table instead.")
-                                display_df = ratio_df[['rent_to_income', 'zipcode']].sort_values('rent_to_income', ascending=False)
-                                st.dataframe(display_df.head(20), use_container_width=True)
                                 
-                                # Add CSV download button
+                                # Add CSV download button below map
+                                display_df = ratio_df[['rent_to_income', 'zipcode']].sort_values('rent_to_income', ascending=False)
                                 csv = display_df.to_csv(index=False)
                                 st.download_button(
                                     label="📥 Download Data as CSV",
@@ -1275,6 +1153,8 @@ def render_analysis_page():
                                     file_name=f"rent_to_income_ratio_{bedroom_type.lower().replace('+', 'plus')}.csv",
                                     mime="text/csv"
                                 )
+                            else:
+                                st.error(f"❌ Failed to render rent-to-income ratio map. Please check data and ZIP shapes.")
                         else:
                             st.warning("⚠️ No valid rent-to-income ratio data after filtering.")
                     else:
