@@ -596,13 +596,38 @@ def create_color_scale(values, reverse=False):
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_zip_shapes():
-    """Load ZIP code shapes from zip_shapes_nyc table (NYC-only)"""
+    """Load ZIP code shapes from zip_shapes_nyc table (NYC-only), with fallback to zip_shapes_geojson"""
     try:
         conn = get_db_connection()
-        # Use zip_shapes_nyc table which contains only NYC ZIP codes
+        
+        # Try zip_shapes_nyc first (NYC-only table)
+        try:
+            query = """
+            SELECT zip_code, geojson
+            FROM zip_shapes_nyc
+            WHERE zip_code IS NOT NULL AND geojson IS NOT NULL;
+            """
+            df = pd.read_sql_query(query, conn)
+            conn.close()
+            
+            if not df.empty:
+                # Clean zip_code to 5-digit format
+                df['zip_code'] = df['zip_code'].astype(str).str.extract(r'(\d{5})', expand=False)
+                df = df[df['zip_code'].notna()]
+                
+                # Parse GeoJSON text into Python dict
+                df['json_obj'] = df['geojson'].apply(json.loads)
+                
+                return df
+        except Exception:
+            # Table doesn't exist, fall back to zip_shapes_geojson with filtering
+            pass
+        
+        # Fallback: Use zip_shapes_geojson and filter to NYC ZIPs
+        conn = get_db_connection()
         query = """
         SELECT zip_code, geojson
-        FROM zip_shapes_nyc
+        FROM zip_shapes_geojson
         WHERE zip_code IS NOT NULL AND geojson IS NOT NULL;
         """
         df = pd.read_sql_query(query, conn)
@@ -614,6 +639,9 @@ def load_zip_shapes():
         # Clean zip_code to 5-digit format
         df['zip_code'] = df['zip_code'].astype(str).str.extract(r'(\d{5})', expand=False)
         df = df[df['zip_code'].notna()]
+        
+        # Filter to NYC ZIPs only (10000-11699)
+        df = filter_to_nyc_zip(df, 'zip_code')
         
         # Parse GeoJSON text into Python dict
         df['json_obj'] = df['geojson'].apply(json.loads)
