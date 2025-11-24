@@ -695,8 +695,15 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                         geojson_feat['properties'] = {}
                     
                     # Store values in properties for tooltip
-                    zipcode_val = str(row.get('zipcode_clean', row.get('zipcode', 'N/A')))
+                    # Get zipcode from the merged dataframe
+                    zipcode_val = str(row.get('zipcode', row.get('zipcode_clean', 'N/A')))
                     value_display_val = str(row.get('value_display', 'N/A'))
+                    
+                    # Ensure we have valid values
+                    if zipcode_val == 'N/A' or zipcode_val == 'nan':
+                        zipcode_val = str(row.get('zipcode_clean', 'N/A'))
+                    if value_display_val == 'N/A' or value_display_val == 'nan':
+                        value_display_val = 'N/A'
                     
                     # Ensure properties dict exists and is properly set
                     if 'properties' not in geojson_feat:
@@ -730,11 +737,20 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         )
         
         # Create tooltip - PyDeck GeoJsonLayer tooltip syntax
-        # PyDeck uses {properties.field_name} for GeoJSON features
+        # Try using text format instead of html for better compatibility
         tooltip = {
+            "text": "ZIP Code: {properties.zipcode}\n" + title + ": {properties.value_display}",
+            "style": {"backgroundColor": "#262730", "color": "white"},
+        }
+        
+        # Also try html format as fallback
+        tooltip_html = {
             "html": "<b>ZIP Code:</b> {properties.zipcode}<br/><b>" + title + ":</b> {properties.value_display}",
             "style": {"backgroundColor": "#262730", "color": "white"},
         }
+        
+        # Use html format (more flexible)
+        tooltip = tooltip_html
         
         # Use NYC-centered view state
         view_state = pdk.ViewState(
