@@ -595,18 +595,51 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         # Get coordinates
         map_df = get_coordinates_for_locations(map_df, location_col)
         
+        # Ensure value_col and location_col still exist after coordinate merge
+        if value_col not in map_df.columns:
+            st.warning(f"⚠️ Value column '{value_col}' lost after coordinate merge")
+            return None
+        if location_col not in map_df.columns:
+            st.warning(f"⚠️ Location column '{location_col}' lost after coordinate merge")
+            return None
+        
         # If we have coordinates, create a scatter map
         if 'latitude' in map_df.columns and 'longitude' in map_df.columns:
             map_df = map_df[map_df['latitude'].notna() & map_df['longitude'].notna()].copy()
             
             if not map_df.empty:
+                # Ensure value_col still exists after filtering
+                if value_col not in map_df.columns:
+                    st.warning(f"⚠️ Value column '{value_col}' not found after filtering")
+                    return None
+                
                 # Create color scale
                 try:
-                    value_series = map_df[value_col]
-                    colors = create_color_scale(value_series, reverse=reverse)
-                    if not colors or len(colors) != len(map_df):
-                        st.warning(f"⚠️ Color scale length mismatch ({len(colors)} vs {len(map_df)}). Using default colors.")
-                        colors = ['#808080'] * len(map_df)  # Default gray
+                    value_series = map_df[value_col].copy()
+                    # Ensure we have valid numeric values
+                    value_series = pd.to_numeric(value_series, errors='coerce')
+                    
+                    # Create a mask for valid values
+                    valid_mask = value_series.notna()
+                    
+                    if not valid_mask.any():
+                        st.warning(f"⚠️ No valid numeric values in '{value_col}' column")
+                        return None
+                    
+                    # Create colors for all rows
+                    colors = ['#808080'] * len(map_df)  # Default gray for all
+                    
+                    # Only create color scale for valid values
+                    if valid_mask.sum() > 0:
+                        valid_values = value_series[valid_mask]
+                        valid_colors = create_color_scale(valid_values, reverse=reverse)
+                        
+                        # Assign colors to valid rows using positional index
+                        valid_positions = [i for i, is_valid in enumerate(valid_mask) if is_valid]
+                        for pos_idx, color in zip(valid_positions, valid_colors):
+                            if pos_idx < len(colors):
+                                colors[pos_idx] = color
+                    
                     map_df['color'] = colors
                 except Exception as e:
                     st.warning(f"⚠️ Error creating color scale: {str(e)[:200]}")
@@ -783,14 +816,20 @@ def render_analysis_page():
         try:
             conn = get_db_connection()
             
-            # Find ZIP-level income table
-            table_query = """
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public' 
-            AND (table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%')
-            ORDER BY table_name;
-            """
+        # Find ZIP-level income table - prioritize zip_median_income
+        table_query = """
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND (table_name = 'zip_median_income' OR table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%')
+        ORDER BY 
+            CASE 
+                WHEN table_name = 'zip_median_income' THEN 1
+                WHEN table_name LIKE '%zip%income%' THEN 2
+                ELSE 3
+            END,
+            table_name;
+        """
             tables_df = pd.read_sql_query(table_query, conn)
             
             income_zip = pd.DataFrame()
@@ -1222,7 +1261,7 @@ def render_analysis_page():
             st.warning("⚠️ No median income data available.")
             st.info("💡 **Troubleshooting:**")
             st.markdown("""
-            - Ensure `noah_zip_income` or similar ZIP-level income table exists in your database
+            - Ensure `zip_median_income` or similar ZIP-level income table exists in your database
             - Check that the table has `zip_code`/`zipcode` and `median_income`/`median_income_usd` columns
             - Verify data is filtered to NYC ZIP codes (100xx-116xx)
             """)
