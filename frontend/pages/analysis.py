@@ -695,17 +695,18 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                         geojson_feat['properties'] = {}
                     
                     # Store values in properties for tooltip
-                    zipcode_val = str(row.get('zipcode_clean', 'N/A'))
+                    zipcode_val = str(row.get('zipcode_clean', row.get('zipcode', 'N/A')))
                     value_display_val = str(row.get('value_display', 'N/A'))
                     
-                    # Set properties for tooltip access
+                    # Ensure properties dict exists and is properly set
+                    if 'properties' not in geojson_feat:
+                        geojson_feat['properties'] = {}
+                    
+                    # Set properties for tooltip access - use simple field names
+                    # PyDeck tooltip accesses these via {properties.zipcode} and {properties.value_display}
                     geojson_feat['properties']['zipcode'] = zipcode_val
                     geojson_feat['properties']['value_display'] = value_display_val
                     geojson_feat['properties']['color_rgb'] = row['color_rgb']
-                    
-                    # Also set at top level for alternative tooltip access
-                    geojson_feat['zipcode'] = zipcode_val
-                    geojson_feat['value_display'] = value_display_val
                     
                     geojson_features.append(geojson_feat)
             except Exception as e:
@@ -729,9 +730,9 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         )
         
         # Create tooltip - PyDeck GeoJsonLayer tooltip syntax
-        # Try multiple formats to ensure compatibility
+        # PyDeck uses {properties.field_name} for GeoJSON features
         tooltip = {
-            "html": "<b>ZIP Code:</b> {object.properties.zipcode}<br/><b>" + title + ":</b> {object.properties.value_display}",
+            "html": "<b>ZIP Code:</b> {properties.zipcode}<br/><b>" + title + ":</b> {properties.value_display}",
             "style": {"backgroundColor": "#262730", "color": "white"},
         }
         
