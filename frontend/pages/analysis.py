@@ -649,19 +649,9 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             opacity=0.8,
         )
         
-        # Create tooltip - PyDeck GeoJsonLayer uses object.properties.field syntax
-        # Use a function to generate tooltip HTML for each feature
-        def get_tooltip_html(feature):
-            if feature and 'properties' in feature:
-                props = feature['properties']
-                zipcode = props.get('zipcode', 'N/A')
-                value_display = props.get('value_display', 'N/A')
-                return f"<b>ZIP Code:</b> {zipcode}<br/><b>{title}:</b> {value_display}"
-            return f"<b>{title}</b>"
-        
-        # Create tooltip using object accessor
+        # Create tooltip - PyDeck GeoJsonLayer uses @properties.field syntax
         tooltip = {
-            "html": "ZIP Code: {object.properties.zipcode}<br/>" + title + ": {object.properties.value_display}",
+            "html": "<b>ZIP Code:</b> {@properties.zipcode}<br/><b>" + title + ":</b> {@properties.value_display}",
             "style": {"backgroundColor": "#262730", "color": "white"},
         }
         
