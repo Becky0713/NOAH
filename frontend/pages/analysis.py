@@ -59,22 +59,47 @@ def normalize_borough_name(borough):
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_median_rent_data():
-    """Fetch median rent data by bedroom type from noah_streeteasy_medianrent_2025_10"""
+    """Fetch median rent data by bedroom type from zip_median_rent"""
     try:
         conn = get_db_connection()
         
+        # Try to find the rent table - prioritize zip_median_rent
+        table_name = None
+        table_query = """
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND (table_name = 'zip_median_rent' OR table_name LIKE '%median%rent%' OR table_name LIKE '%rent%zip%')
+        ORDER BY 
+            CASE 
+                WHEN table_name = 'zip_median_rent' THEN 1
+                WHEN table_name LIKE '%zip%rent%' THEN 2
+                ELSE 3
+            END,
+            table_name
+        LIMIT 1;
+        """
+        tables_df = pd.read_sql_query(table_query, conn)
+        
+        if tables_df.empty:
+            conn.close()
+            st.warning("⚠️ No median rent table found (looking for `zip_median_rent` or similar)")
+            return pd.DataFrame()
+        
+        table_name = tables_df.iloc[0]['table_name']
+        
         # Get column names
-        column_query = """
+        column_query = f"""
         SELECT column_name 
         FROM information_schema.columns 
-        WHERE table_name = 'noah_streeteasy_medianrent_2025_10'
+        WHERE table_name = '{table_name}'
         ORDER BY ordinal_position;
         """
         columns_df = pd.read_sql_query(column_query, conn)
         
         if columns_df.empty:
             conn.close()
-            st.warning("⚠️ Table `noah_streeteasy_medianrent_2025_10` not found")
+            st.warning(f"⚠️ Table `{table_name}` has no columns")
             return pd.DataFrame()
         
         column_names = columns_df['column_name'].tolist()
@@ -123,7 +148,7 @@ def fetch_median_rent_data():
                 select_str = ", ".join([f'"{col}"' for col in select_cols])
                 query = f"""
                 SELECT {select_str}
-                FROM noah_streeteasy_medianrent_2025_10
+                FROM {table_name}
                 WHERE "{rent_val_col}" IS NOT NULL
                 """
                 
@@ -186,7 +211,7 @@ def fetch_median_rent_data():
         if not bedroom_cols:
             conn.close()
             st.warning("⚠️ Could not find bedroom type rent columns")
-            st.info(f"Available columns in `noah_streeteasy_medianrent_2025_10`: {column_names}")
+            st.info(f"Available columns in `{table_name}`: {column_names}")
             return pd.DataFrame()
         
         # Build query
@@ -202,7 +227,7 @@ def fetch_median_rent_data():
         
         query = f"""
         SELECT {select_str}
-        FROM noah_streeteasy_medianrent_2025_10
+        FROM {table_name}
         """
         
         df = pd.read_sql_query(query, conn)
@@ -955,10 +980,27 @@ def render_analysis_page():
             if not income_tables.empty:
                 income_table = income_tables.iloc[0]['table_name']
             
-            # Find ZIP-level rent table (StreetEasy)
-            rent_table = 'noah_streeteasy_medianrent_2025_10'
+            # Find ZIP-level rent table - prioritize zip_median_rent
+            rent_table_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND (table_name = 'zip_median_rent' OR table_name LIKE '%median%rent%' OR table_name LIKE '%rent%zip%')
+            ORDER BY 
+                CASE 
+                    WHEN table_name = 'zip_median_rent' THEN 1
+                    WHEN table_name LIKE '%zip%rent%' THEN 2
+                    ELSE 3
+                END,
+                table_name
+            LIMIT 1;
+            """
+            rent_tables = pd.read_sql_query(rent_table_query, conn)
+            rent_table = None
+            if not rent_tables.empty:
+                rent_table = rent_tables.iloc[0]['table_name']
             
-            if income_table:
+            if income_table and rent_table:
                 # Get column names for income table
                 income_cols_query = f"""
                 SELECT column_name 
