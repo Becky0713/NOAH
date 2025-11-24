@@ -1247,7 +1247,13 @@ def render_analysis_page():
                     st.pydeck_chart(map_obj, use_container_width=True)
                 else:
                     st.info("Map visualization requires coordinate data. Showing data table instead.")
-                    display_df = rent_df[[bed_col, 'zipcode', 'area_name', 'borough']].dropna(subset=[bed_col]).sort_values(bed_col)
+                    # Only select columns that exist
+                    display_cols = [bed_col, 'zipcode']
+                    if 'area_name' in rent_df.columns:
+                        display_cols.append('area_name')
+                    if 'borough' in rent_df.columns:
+                        display_cols.append('borough')
+                    display_df = rent_df[display_cols].dropna(subset=[bed_col]).sort_values(bed_col)
                     st.dataframe(display_df.head(20), use_container_width=True)
             else:
                 st.warning(f"⚠️ No {bedroom_type} rent data available.")
