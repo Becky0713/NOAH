@@ -816,20 +816,20 @@ def render_analysis_page():
         try:
             conn = get_db_connection()
             
-        # Find ZIP-level income table - prioritize zip_median_income
-        table_query = """
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND (table_name = 'zip_median_income' OR table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%')
-        ORDER BY 
-            CASE 
-                WHEN table_name = 'zip_median_income' THEN 1
-                WHEN table_name LIKE '%zip%income%' THEN 2
-                ELSE 3
-            END,
-            table_name;
-        """
+            # Find ZIP-level income table - prioritize zip_median_income
+            table_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND (table_name = 'zip_median_income' OR table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%')
+            ORDER BY 
+                CASE 
+                    WHEN table_name = 'zip_median_income' THEN 1
+                    WHEN table_name LIKE '%zip%income%' THEN 2
+                    ELSE 3
+                END,
+                table_name;
+            """
             tables_df = pd.read_sql_query(table_query, conn)
             
             income_zip = pd.DataFrame()
