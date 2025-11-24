@@ -702,6 +702,12 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         if value_col not in merged_df.columns:
             merged_df[value_col] = None
         
+        # Ensure zipcode_clean exists for all rows (use zip_code from shapes)
+        if 'zipcode_clean' not in merged_df.columns:
+            merged_df['zipcode_clean'] = merged_df['zip_code']
+        else:
+            merged_df['zipcode_clean'] = merged_df['zipcode_clean'].fillna(merged_df['zip_code'])
+        
         # Create color scale based on values
         try:
             value_series = pd.to_numeric(merged_df[value_col], errors='coerce')
@@ -765,25 +771,39 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                         geojson_feat['properties'] = {}
                     
                     # Store values in properties for tooltip
-                    # Get zipcode from the merged dataframe
-                    zipcode_val = str(row.get('zipcode', row.get('zipcode_clean', 'N/A')))
+                    # Get zipcode from the merged dataframe - prioritize zip_code from shapes
+                    zipcode_val = str(row.get('zip_code', row.get('zipcode_clean', row.get('zipcode', 'N/A'))))
                     value_display_val = str(row.get('value_display', 'N/A'))
                     
                     # Ensure we have valid values
-                    if zipcode_val == 'N/A' or zipcode_val == 'nan':
-                        zipcode_val = str(row.get('zipcode_clean', 'N/A'))
-                    if value_display_val == 'N/A' or value_display_val == 'nan':
-                        value_display_val = 'N/A'
+                    if zipcode_val == 'N/A' or zipcode_val == 'nan' or zipcode_val == 'None':
+                        zipcode_val = str(row.get('zip_code', row.get('zipcode_clean', 'N/A')))
+                    if value_display_val == 'N/A' or value_display_val == 'nan' or value_display_val == 'None':
+                        value_display_val = 'No data'
                     
                     # Ensure properties dict exists and is properly set
                     if 'properties' not in geojson_feat:
                         geojson_feat['properties'] = {}
                     
-                    # Set properties for tooltip access - use simple field names
-                    # PyDeck tooltip accesses these via {properties.zipcode} and {properties.value_display}
-                    geojson_feat['properties']['zipcode'] = zipcode_val
-                    geojson_feat['properties']['value_display'] = value_display_val
+                    # Set properties for tooltip access
+                    # PyDeck GeoJsonLayer tooltip uses {properties.field_name} format
+                    # Ensure values are clean strings
+                    if pd.isna(zipcode_val) or zipcode_val == 'nan' or zipcode_val == 'None':
+                        zipcode_val = str(row.get('zip_code', 'N/A'))
+                    if pd.isna(value_display_val) or value_display_val == 'nan' or value_display_val == 'None':
+                        value_display_val = 'No data'
+                    
+                    geojson_feat['properties']['zipcode'] = str(zipcode_val)
+                    geojson_feat['properties']['value_display'] = str(value_display_val)
                     geojson_feat['properties']['color_rgb'] = row['color_rgb']
+                    
+                    # Also set at top level as backup (some PyDeck versions may need this)
+                    geojson_feat['zipcode'] = str(zipcode_val)
+                    geojson_feat['value_display'] = str(value_display_val)
+                    
+                    # Also set at top level as backup (some PyDeck versions may need this)
+                    geojson_feat['zipcode'] = zipcode_val
+                    geojson_feat['value_display'] = value_display_val
                     
                     geojson_features.append(geojson_feat)
             except Exception as e:
@@ -807,11 +827,11 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         )
         
         # Create tooltip - PyDeck GeoJsonLayer tooltip syntax
-        # For GeoJSON features, PyDeck accesses properties directly
-        # Format: {properties.field_name} or {field_name} if at top level
+        # PyDeck GeoJsonLayer uses {properties.field_name} format for accessing GeoJSON properties
+        # The tooltip template will be replaced with actual values when hovering
         tooltip = {
             "html": "<b>ZIP Code:</b> {properties.zipcode}<br/><b>" + title + ":</b> {properties.value_display}",
-            "style": {"backgroundColor": "#262730", "color": "white"},
+            "style": {"backgroundColor": "#262730", "color": "white", "fontSize": "12px"},
         }
         
         # Use NYC-centered view state (automatically centered on NYC)
