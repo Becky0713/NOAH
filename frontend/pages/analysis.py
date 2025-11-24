@@ -74,33 +74,14 @@ def fetch_median_rent_data():
         
         if columns_df.empty:
             conn.close()
+            st.warning("⚠️ Table `noah_streeteasy_medianrent_2025_10` not found")
             return pd.DataFrame()
         
         column_names = columns_df['column_name'].tolist()
         
-        # Find bedroom type columns (studio, 1br, 2br, 3+br)
-        bedroom_cols = {}
-        rent_cols = {}
-        
-        for col in column_names:
-            col_lower = col.lower()
-            if ('studio' in col_lower or '0br' in col_lower or 'efficiency' in col_lower) and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower):
-                bedroom_cols.setdefault('studio', col)
-            elif (
-                any(token in col_lower for token in ['1br', '1_br', 'one', '1-bedroom', 'one_bed'])
-                and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower)
-            ):
-                bedroom_cols.setdefault('1br', col)
-            elif (
-                any(token in col_lower for token in ['2br', '2_br', 'two', 'two_bed', '2-bedroom'])
-                and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower)
-            ):
-                bedroom_cols.setdefault('2br', col)
-            elif (
-                any(token in col_lower for token in ['3br', '3_br', '3+', 'three', 'three_bed', '4br', '4_br', 'five', '5br', '6br'])
-                and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower)
-            ):
-                bedroom_cols.setdefault('3+br', col)
+        # Check if table uses bedroom_type column structure (pivoted format)
+        has_bedroom_type_col = 'bedroom_type' in column_names
+        has_median_rent_col = any('median_rent' in col.lower() or 'rent' in col.lower() for col in column_names)
         
         # Find location columns
         zip_col = None
@@ -121,6 +102,86 @@ def fetch_median_rent_data():
             if col in column_names:
                 area_col = col
                 break
+        
+        # Approach 1: If table has bedroom_type column, pivot it
+        if has_bedroom_type_col and has_median_rent_col:
+            # Find rent value column
+            rent_val_col = None
+            for col in ['median_rent_usd', 'median_rent', 'rent', 'rent_price', 'rent_usd']:
+                if col in column_names:
+                    rent_val_col = col
+                    break
+            
+            if rent_val_col and zip_col:
+                # Query all data
+                select_cols = [zip_col, 'bedroom_type', rent_val_col]
+                if borough_col:
+                    select_cols.append(borough_col)
+                if area_col:
+                    select_cols.append(area_col)
+                
+                select_str = ", ".join([f'"{col}"' for col in select_cols])
+                query = f"""
+                SELECT {select_str}
+                FROM noah_streeteasy_medianrent_2025_10
+                WHERE "{rent_val_col}" IS NOT NULL
+                """
+                
+                df = pd.read_sql_query(query, conn)
+                conn.close()
+                
+                if not df.empty:
+                    # Pivot to get rent_studio, rent_1br, etc.
+                    pivot_df = df.pivot_table(
+                        index=zip_col,
+                        columns='bedroom_type',
+                        values=rent_val_col,
+                        aggfunc='first'
+                    ).reset_index()
+                    
+                    # Rename columns to rent_studio, rent_1br, etc.
+                    pivot_df.columns = [f'rent_{str(col).lower().replace("+", "").replace(" ", "")}' if col != zip_col else col for col in pivot_df.columns]
+                    
+                    # Merge back location info
+                    location_cols = [col for col in [zip_col, borough_col, area_col] if col and col != zip_col]
+                    if location_cols:
+                        df_location = df[[zip_col] + location_cols].drop_duplicates(subset=[zip_col])
+                        pivot_df = pivot_df.merge(df_location, on=zip_col, how='left')
+                    
+                    df = pivot_df
+                    
+                    # Prepare location columns
+                    if zip_col:
+                        df['zipcode'] = df[zip_col].astype(str).str.extract(r'(\d{5})', expand=False)
+                    if borough_col:
+                        df['borough'] = df[borough_col].apply(normalize_borough_name)
+                    if area_col:
+                        df['area_name'] = df[area_col].astype(str)
+                    
+                    return df
+        
+        # Approach 2: Try to find separate columns for each bedroom type
+        bedroom_cols = {}
+        
+        for col in column_names:
+            col_lower = col.lower()
+            if ('studio' in col_lower or '0br' in col_lower or 'efficiency' in col_lower) and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower):
+                bedroom_cols.setdefault('studio', col)
+            elif (
+                any(token in col_lower for token in ['1br', '1_br', 'one', '1-bedroom', 'one_bed'])
+                and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower)
+            ):
+                bedroom_cols.setdefault('1br', col)
+            elif (
+                any(token in col_lower for token in ['2br', '2_br', 'two', 'two_bed', '2-bedroom'])
+                and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower)
+            ):
+                bedroom_cols.setdefault('2br', col)
+            elif (
+                any(token in col_lower for token in ['3br', '3_br', '3+', 'three', 'three_bed', '4br', '4_br', 'five', '5br', '6br'])
+                and ('rent' in col_lower or 'median' in col_lower or 'price' in col_lower)
+            ):
+                bedroom_cols.setdefault('3+br', col)
         
         if not bedroom_cols:
             conn.close()
@@ -165,6 +226,8 @@ def fetch_median_rent_data():
         return df
     except Exception as e:
         st.warning(f"⚠️ Could not fetch median rent data: {str(e)[:200]}")
+        import traceback
+        st.code(traceback.format_exc()[:500])
         return pd.DataFrame()
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -514,14 +577,17 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             if not map_df.empty:
                 # Create color scale
                 try:
-                    colors = create_color_scale(map_df[value_col], reverse=reverse)
-                    if len(colors) != len(map_df):
-                        st.warning(f"⚠️ Color scale length mismatch. Using default colors.")
-                        colors = ['#d73027'] * len(map_df)  # Default red
+                    value_series = map_df[value_col]
+                    colors = create_color_scale(value_series, reverse=reverse)
+                    if not colors or len(colors) != len(map_df):
+                        st.warning(f"⚠️ Color scale length mismatch ({len(colors)} vs {len(map_df)}). Using default colors.")
+                        colors = ['#808080'] * len(map_df)  # Default gray
                     map_df['color'] = colors
                 except Exception as e:
-                    st.warning(f"⚠️ Error creating color scale: {str(e)[:100]}")
-                    map_df['color'] = '#d73027'  # Default red
+                    st.warning(f"⚠️ Error creating color scale: {str(e)[:200]}")
+                    import traceback
+                    st.code(traceback.format_exc()[:300])
+                    map_df['color'] = '#808080'  # Default gray
                 
                 # Create PyDeck map
                 center_lat = float(map_df['latitude'].mean())
