@@ -783,34 +783,13 @@ def render_analysis_page():
             index=0
         )
     
-    # Load data
+    # Load data (for maps - show all NYC data, not filtered by location)
     with st.spinner("Loading data..."):
         rent_df = fetch_median_rent_data()
         income_df = fetch_median_income_data()
         burden_df = fetch_rent_burden_analysis_data()
     
-    # Apply filters
-    if location_filter:
-        location_lower = location_filter.lower()
-        if rent_df is not None and not rent_df.empty:
-            if 'zipcode' in rent_df.columns:
-                rent_df = rent_df[rent_df['zipcode'].astype(str).str.contains(location_lower, case=False, na=False)]
-            if 'area_name' in rent_df.columns:
-                rent_df = rent_df[rent_df['area_name'].astype(str).str.contains(location_lower, case=False, na=False)]
-            if 'borough' in rent_df.columns:
-                rent_df = rent_df[rent_df['borough'].astype(str).str.contains(location_lower, case=False, na=False)]
-        
-        if income_df is not None and not income_df.empty:
-            if 'zipcode' in income_df.columns:
-                income_df = income_df[income_df['zipcode'].astype(str).str.contains(location_lower, case=False, na=False)]
-            if 'area_name' in income_df.columns:
-                income_df = income_df[income_df['area_name'].astype(str).str.contains(location_lower, case=False, na=False)]
-            if 'borough' in income_df.columns:
-                income_df = income_df[income_df['borough'].astype(str).str.contains(location_lower, case=False, na=False)]
-        
-        if burden_df is not None and not burden_df.empty:
-            if 'zipcode' in burden_df.columns:
-                burden_df = burden_df[burden_df['zipcode'].astype(str).str.contains(location_lower, case=False, na=False)]
+    # Note: Maps display all NYC data, location_filter is only used for Value Lookup
     
     # Prepare ZIP-level data for Top 3 Critical Areas
     def prepare_top3_critical_areas():
@@ -1239,14 +1218,7 @@ def render_analysis_page():
         if bedroom_type != "All":
             ratio_df = fetch_rent_income_ratio_data(bedroom_type)
             
-            # Apply location filter if provided
-            if location_filter:
-                import re
-                zip_pattern = r'\b(\d{5})\b'
-                zip_matches = re.findall(zip_pattern, location_filter)
-                if zip_matches:
-                    target_zip = zip_matches[0]
-                    ratio_df = ratio_df[ratio_df['zipcode'] == target_zip] if not ratio_df.empty else ratio_df
+            # Note: Maps show all NYC data, location_filter is not applied here
             
             bed_col_map = {
                 "Studio": "ratio_studio",
