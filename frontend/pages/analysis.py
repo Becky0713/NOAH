@@ -173,22 +173,44 @@ def fetch_median_income_data():
     try:
         conn = get_db_connection()
         
+        # Priority order: try known table names first, then auto-detect
+        priority_tables = ['noah_zip_income', 'zip_income', 'zip_median_income']
+        
         # Find ZIP-level income table
         table_query = """
         SELECT table_name 
         FROM information_schema.tables 
         WHERE table_schema = 'public' 
-        AND (table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%')
-        ORDER BY table_name;
+        AND (table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%' OR table_name = 'noah_zip_income')
+        ORDER BY 
+            CASE 
+                WHEN table_name = 'noah_zip_income' THEN 1
+                WHEN table_name LIKE 'zip%income%' THEN 2
+                ELSE 3
+            END,
+            table_name;
         """
         tables_df = pd.read_sql_query(table_query, conn)
         
         if tables_df.empty:
             conn.close()
+            st.warning("⚠️ No ZIP-level income tables found in database")
             return pd.DataFrame()
         
+        # Try priority tables first
+        all_tables = tables_df['table_name'].tolist()
+        # Reorder: priority tables first
+        ordered_tables = []
+        for priority in priority_tables:
+            if priority in all_tables:
+                ordered_tables.append(priority)
+        # Add remaining tables
+        for table in all_tables:
+            if table not in ordered_tables:
+                ordered_tables.append(table)
+        
         # Try each table until we find one with data
-        for table_name in tables_df['table_name'].tolist():
+        for table_name in ordered_tables:
             try:
                 # Get columns
                 col_query = f"""
@@ -217,7 +239,8 @@ def fetch_median_income_data():
                     query = f"""
                     SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
                     FROM {table_name}
-                    WHERE "{zip_col}" IS NOT NULL AND "{income_col}" IS NOT NULL;
+                    WHERE "{zip_col}" IS NOT NULL AND "{income_col}" IS NOT NULL
+                    AND "{income_col}" > 0;
                     """
                     df = pd.read_sql_query(query, conn)
                     
@@ -225,16 +248,25 @@ def fetch_median_income_data():
                         df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
                         df = df[df['zipcode'].notna()]
                         df['median_income'] = pd.to_numeric(df['median_income'], errors='coerce')
-                        df = df[df['median_income'].notna()]
-                        conn.close()
-                        return df
-            except Exception:
+                        df = df[df['median_income'].notna() & (df['median_income'] > 0)]
+                        
+                        # Filter to NYC ZIPs only (100xx-116xx)
+                        df = df[df['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)]
+                        
+                        if not df.empty:
+                            conn.close()
+                            return df
+            except Exception as e:
+                # Log error but continue trying other tables
                 continue
         
         conn.close()
+        st.warning("⚠️ Found ZIP-level income tables but no valid data")
         return pd.DataFrame()
     except Exception as e:
         st.warning(f"⚠️ Could not fetch median income data: {str(e)[:200]}")
+        import traceback
+        st.code(traceback.format_exc()[:500])
         return pd.DataFrame()
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -1061,15 +1093,31 @@ def render_analysis_page():
         st.subheader("💰 Median Income Map")
         st.markdown("**Color Legend:** 🔴 Red = Lowest Income | 🟢 Green = Highest Income")
         if not income_df.empty and income_df['median_income'].notna().any():
+            # Show data summary
+            st.info(f"📊 Loaded {len(income_df)} ZIP codes with median income data. Range: ${income_df['median_income'].min():,.0f} - ${income_df['median_income'].max():,.0f}")
+            
             map_obj = render_map_visualization(income_df, 'median_income', "Median Income", reverse_color=True)
             if map_obj:
                 st.pydeck_chart(map_obj, use_container_width=True)
             else:
                 st.info("Map visualization requires coordinate data. Showing data table instead.")
-                display_df = income_df[['median_income', 'zipcode', 'area_name', 'borough']].dropna(subset=['median_income']).sort_values('median_income')
+                # Try to include area_name and borough if available
+                display_cols = ['median_income', 'zipcode']
+                if 'area_name' in income_df.columns:
+                    display_cols.append('area_name')
+                if 'borough' in income_df.columns:
+                    display_cols.append('borough')
+                
+                display_df = income_df[display_cols].dropna(subset=['median_income']).sort_values('median_income')
                 st.dataframe(display_df.head(20), use_container_width=True)
         else:
             st.warning("⚠️ No median income data available.")
+            st.info("💡 **Troubleshooting:**")
+            st.markdown("""
+            - Ensure `noah_zip_income` or similar ZIP-level income table exists in your database
+            - Check that the table has `zip_code`/`zipcode` and `median_income`/`median_income_usd` columns
+            - Verify data is filtered to NYC ZIP codes (100xx-116xx)
+            """)
     
     if show_burden_map:
         st.markdown("---")
