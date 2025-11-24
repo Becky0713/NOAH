@@ -36,6 +36,34 @@ def get_db_connection():
         st.error(f"❌ Database connection error: {e}")
         st.stop()
 
+def filter_to_nyc_zip(df, zip_col="zipcode"):
+    """
+    Filter DataFrame to only include NYC ZIP codes.
+    
+    NYC ZIP codes generally fall into these prefixes:
+    100, 101, 102, 103, 104, 110, 111, 112, 113, 114, 116
+    
+    Args:
+        df: DataFrame to filter
+        zip_col: Name of the ZIP code column (default: "zipcode")
+    
+    Returns:
+        Filtered DataFrame containing only NYC ZIP codes
+    """
+    if df.empty or zip_col not in df.columns:
+        return df
+    
+    # Convert to string and extract 5-digit ZIP codes
+    df = df.copy()
+    df[zip_col] = df[zip_col].astype(str).str.extract(r'(\d{5})', expand=False)
+    
+    # Filter to NYC ZIP codes: 10000-11699
+    # This covers: 100xx, 101xx, 102xx, 103xx, 104xx, 110xx, 111xx, 112xx, 113xx, 114xx, 116xx
+    nyc_pattern = r'^(10[0-9]{3}|11[0-6][0-9]{2})$'
+    df = df[df[zip_col].str.match(nyc_pattern, na=False)]
+    
+    return df
+
 def normalize_borough_name(borough):
     """Normalize borough name for matching"""
     if not borough:
@@ -157,6 +185,13 @@ def fetch_median_rent_data():
                 conn.close()
                 
                 if not df.empty:
+                    # Apply NYC ZIP filter before processing
+                    df = filter_to_nyc_zip(df, zip_col)
+                    
+                    if df.empty:
+                        conn.close()
+                        return pd.DataFrame()
+                    
                     # Pivot to get rent_studio, rent_1br, etc.
                     pivot_df = df.pivot_table(
                         index=zip_col,
@@ -249,6 +284,9 @@ def fetch_median_rent_data():
         if area_col:
             df['area_name'] = df[area_col].astype(str)
         
+        # Filter to NYC ZIPs only using helper function
+        df = filter_to_nyc_zip(df, 'zipcode')
+        
         return df
     except Exception as e:
         st.warning(f"⚠️ Could not fetch median rent data: {str(e)[:200]}")
@@ -339,8 +377,8 @@ def fetch_median_income_data():
                         df['median_income'] = pd.to_numeric(df['median_income'], errors='coerce')
                         df = df[df['median_income'].notna() & (df['median_income'] > 0)]
                         
-                        # Filter to NYC ZIPs only (100xx-116xx)
-                        df = df[df['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)]
+                        # Filter to NYC ZIPs only using helper function
+                        df = filter_to_nyc_zip(df, 'zipcode')
                         
                         if not df.empty:
                             conn.close()
@@ -419,8 +457,8 @@ def fetch_rent_income_ratio_data(bedroom_type="All"):
             if not df.empty:
                 df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
                 df = df[df['zipcode'].notna()]
-                # Filter to NYC ZIPs only (100xx-116xx)
-                df = df[df['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)]
+                # Filter to NYC ZIPs only using helper function
+                df = filter_to_nyc_zip(df, 'zipcode')
                 if ratio_col in df.columns:
                     df[ratio_col] = pd.to_numeric(df[ratio_col], errors='coerce')
                     df = df[df[ratio_col].notna() & (df[ratio_col] > 0)]
@@ -493,8 +531,8 @@ def fetch_rent_burden_analysis_data():
             if not df.empty:
                 df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
                 df = df[df['zipcode'].notna()]
-                # Filter to NYC ZIPs only (100xx-116xx)
-                df = df[df['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)]
+                # Filter to NYC ZIPs only using helper function
+                df = filter_to_nyc_zip(df, 'zipcode')
                 df['rent_burden_rate'] = pd.to_numeric(df['rent_burden_rate'], errors='coerce')
                 # If values are < 1, convert from decimal to percentage
                 if not df.empty and df['rent_burden_rate'].max() < 1:
@@ -558,12 +596,13 @@ def create_color_scale(values, reverse=False):
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_zip_shapes():
-    """Load ZIP code shapes from zip_shapes_geojson table"""
+    """Load ZIP code shapes from zip_shapes_nyc table (NYC-only)"""
     try:
         conn = get_db_connection()
+        # Use zip_shapes_nyc table which contains only NYC ZIP codes
         query = """
         SELECT zip_code, geojson
-        FROM zip_shapes_geojson
+        FROM zip_shapes_nyc
         WHERE zip_code IS NOT NULL AND geojson IS NOT NULL;
         """
         df = pd.read_sql_query(query, conn)
@@ -618,30 +657,32 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             return None
         
         # Merge data with GeoJSON shapes
-        merged_df = map_df.merge(
-            zip_shapes[['zip_code', 'json_obj']],
-            left_on='zipcode_clean',
-            right_on='zip_code',
-            how='inner'
+        # Use left join to include all NYC ZIP shapes, even if they don't have data
+        # This ensures the full NYC outline is visible with gray for missing data
+        merged_df = zip_shapes[['zip_code', 'json_obj']].merge(
+            map_df,
+            left_on='zip_code',
+            right_on='zipcode_clean',
+            how='left'
         )
         
         if merged_df.empty:
-            st.warning(f"⚠️ No matching ZIP shapes found for {title}")
+            st.warning(f"⚠️ No ZIP shapes available for {title}")
             return None
+        
+        # Fill missing values with NaN so they show as gray
+        if value_col not in merged_df.columns:
+            merged_df[value_col] = None
         
         # Create color scale based on values
         try:
             value_series = pd.to_numeric(merged_df[value_col], errors='coerce')
             valid_mask = value_series.notna()
             
-            if not valid_mask.any():
-                st.warning(f"⚠️ No valid numeric values in '{value_col}' column")
-                return None
+            # Create colors for all rows - default gray for missing data
+            colors = ['#808080'] * len(merged_df)  # Default gray for missing data
             
-            # Create colors for all rows
-            colors = ['#808080'] * len(merged_df)  # Default gray
-            
-            # Create color scale for valid values
+            # Create color scale for valid values only
             if valid_mask.sum() > 0:
                 valid_values = value_series[valid_mask]
                 valid_colors = create_color_scale(valid_values, reverse=reverse)
@@ -672,14 +713,15 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             merged_df['color_rgb'] = [[128, 128, 128, 180]] * len(merged_df)
         
         # Format value for tooltip
+        # Handle missing values - show "No data" for ZIPs without data
         if 'rent' in value_col.lower() and 'burden' not in value_col.lower() and 'income' not in value_col.lower():
-            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "No data")
         elif 'income' in value_col.lower():
-            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "No data")
         elif 'ratio' in value_col.lower():
-            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "No data")
         else:
-            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A")
+            merged_df['value_display'] = merged_df[value_col].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "No data")
         
         # Prepare GeoJSON features with properties for tooltip and color
         geojson_features = []
@@ -744,11 +786,12 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             "style": {"backgroundColor": "#262730", "color": "white"},
         }
         
-        # Use NYC-centered view state
+        # Use NYC-centered view state (automatically centered on NYC)
+        # NYC approximate center: latitude 40.7, longitude -73.95
         view_state = pdk.ViewState(
             latitude=40.7,
             longitude=-73.95,
-            zoom=9,
+            zoom=10,  # Slightly zoomed in to focus on NYC
             pitch=0
         )
         
