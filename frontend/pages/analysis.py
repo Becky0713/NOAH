@@ -737,20 +737,12 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         )
         
         # Create tooltip - PyDeck GeoJsonLayer tooltip syntax
-        # Try using text format instead of html for better compatibility
+        # For GeoJSON features, PyDeck accesses properties directly
+        # Format: {properties.field_name} or {field_name} if at top level
         tooltip = {
-            "text": "ZIP Code: {properties.zipcode}\n" + title + ": {properties.value_display}",
-            "style": {"backgroundColor": "#262730", "color": "white"},
-        }
-        
-        # Also try html format as fallback
-        tooltip_html = {
             "html": "<b>ZIP Code:</b> {properties.zipcode}<br/><b>" + title + ":</b> {properties.value_display}",
             "style": {"backgroundColor": "#262730", "color": "white"},
         }
-        
-        # Use html format (more flexible)
-        tooltip = tooltip_html
         
         # Use NYC-centered view state
         view_state = pdk.ViewState(
