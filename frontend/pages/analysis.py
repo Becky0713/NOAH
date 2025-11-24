@@ -360,17 +360,23 @@ def fetch_median_income_data():
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_rent_burden_analysis_data():
-    """Fetch ZIP-level rent burden data - auto-detect table and columns"""
+    """Fetch ZIP-level rent burden data - prioritize zip_rent_burden_ny table"""
     try:
         conn = get_db_connection()
         
-        # Find ZIP-level rent burden table
+        # Find ZIP-level rent burden table - prioritize zip_rent_burden_ny
         table_query = """
         SELECT table_name 
         FROM information_schema.tables 
         WHERE table_schema = 'public' 
-        AND (table_name LIKE '%zip%burden%' OR table_name LIKE '%burden%zip%' OR table_name LIKE '%rentburden%')
-        ORDER BY table_name;
+        AND (table_name = 'zip_rent_burden_ny' OR table_name LIKE '%zip%burden%' OR table_name LIKE '%burden%zip%' OR table_name LIKE '%rentburden%')
+        ORDER BY 
+            CASE 
+                WHEN table_name = 'zip_rent_burden_ny' THEN 1
+                WHEN table_name LIKE '%zip%burden%' THEN 2
+                ELSE 3
+            END,
+            table_name;
         """
         tables_df = pd.read_sql_query(table_query, conn)
         
@@ -609,16 +615,21 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                 
                 # Ensure it's a Feature object
                 if isinstance(geojson_feat, dict):
-                    # Add properties for tooltip and color
+                    # Add/update properties for tooltip and color
                     if 'properties' not in geojson_feat:
                         geojson_feat['properties'] = {}
                     
-                    geojson_feat['properties']['zipcode'] = str(row.get('zipcode_clean', 'N/A'))
-                    geojson_feat['properties']['value_display'] = str(row.get('value_display', 'N/A'))
+                    # Store values in properties for tooltip
+                    zipcode_val = str(row.get('zipcode_clean', 'N/A'))
+                    value_display_val = str(row.get('value_display', 'N/A'))
+                    
+                    # Set properties for tooltip access
+                    geojson_feat['properties']['zipcode'] = zipcode_val
+                    geojson_feat['properties']['value_display'] = value_display_val
                     geojson_feat['properties']['color_rgb'] = row['color_rgb']
                     
                     geojson_features.append(geojson_feat)
-            except Exception:
+            except Exception as e:
                 continue
         
         if not geojson_features:
@@ -638,9 +649,19 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             opacity=0.8,
         )
         
-        # Create tooltip
+        # Create tooltip - PyDeck GeoJsonLayer uses object.properties.field syntax
+        # Use a function to generate tooltip HTML for each feature
+        def get_tooltip_html(feature):
+            if feature and 'properties' in feature:
+                props = feature['properties']
+                zipcode = props.get('zipcode', 'N/A')
+                value_display = props.get('value_display', 'N/A')
+                return f"<b>ZIP Code:</b> {zipcode}<br/><b>{title}:</b> {value_display}"
+            return f"<b>{title}</b>"
+        
+        # Create tooltip using object accessor
         tooltip = {
-            "html": "<b>ZIP Code:</b> {properties.zipcode}<br/><b>" + title + ":</b> {properties.value_display}",
+            "html": "ZIP Code: {object.properties.zipcode}<br/>" + title + ": {object.properties.value_display}",
             "style": {"backgroundColor": "#262730", "color": "white"},
         }
         
@@ -835,13 +856,19 @@ def render_analysis_page():
         try:
             conn = get_db_connection()
             
-            # Find ZIP-level rent burden table
+            # Find ZIP-level rent burden table - prioritize zip_rent_burden_ny
             table_query = """
             SELECT table_name 
             FROM information_schema.tables 
             WHERE table_schema = 'public' 
-            AND (table_name LIKE '%zip%burden%' OR table_name LIKE '%burden%zip%' OR table_name LIKE '%rentburden%')
-            ORDER BY table_name;
+            AND (table_name = 'zip_rent_burden_ny' OR table_name LIKE '%zip%burden%' OR table_name LIKE '%burden%zip%' OR table_name LIKE '%rentburden%')
+            ORDER BY 
+                CASE 
+                    WHEN table_name = 'zip_rent_burden_ny' THEN 1
+                    WHEN table_name LIKE '%zip%burden%' THEN 2
+                    ELSE 3
+                END,
+                table_name;
             """
             tables_df = pd.read_sql_query(table_query, conn)
             
@@ -978,8 +1005,8 @@ def render_analysis_page():
             bed_col = f'rent_{bedroom_type.lower().replace("+", "")}'
             if bed_col in rent_df.columns and not rent_df[bed_col].isna().all():
                 st.subheader(f"📊 Median Rent Map - {bedroom_type}")
-                st.markdown(f"**Color Legend:** 🔴 Red = Lowest Rent | 🟢 Green = Highest Rent")
-                map_obj = render_map_visualization(rent_df, bed_col, f"Median Rent ({bedroom_type})", reverse=True)
+                st.markdown(f"**Color Legend:** 🟢 Green = Lowest Rent | 🔴 Red = Highest Rent")
+                map_obj = render_map_visualization(rent_df, bed_col, f"Median Rent ({bedroom_type})", reverse=False)
                 if map_obj:
                     st.pydeck_chart(map_obj, use_container_width=True)
                     
