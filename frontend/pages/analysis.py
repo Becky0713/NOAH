@@ -765,7 +765,7 @@ def render_analysis_page():
     with col1:
         bedroom_type = st.selectbox(
             "Bedroom Type",
-            options=["All", "Studio", "1BR", "2BR", "3+BR"],
+            options=["Studio", "1BR", "2BR", "3+BR"],
             index=0
         )
     
@@ -995,7 +995,7 @@ def render_analysis_page():
     st.markdown("### 📋 Value Lookup")
     
     # Check if all three filters are selected
-    if bedroom_type != "All" and location_filter and map_type:
+    if bedroom_type and location_filter and map_type:
         # Extract ZIP code from location filter
         zip_match = None
         if location_filter:
@@ -1108,7 +1108,7 @@ def render_analysis_page():
         st.markdown("**Color Legend:** 🔴 Red = Highest Rent | 🟢 Green = Lowest Rent")
         
         # Median Rent requires bedroom type selection
-        if bedroom_type != "All":
+        if bedroom_type:
             bed_col_map = {
                 "Studio": "rent_studio",
                 "1BR": "rent_1br",
@@ -1215,7 +1215,7 @@ def render_analysis_page():
         st.markdown("**Color Legend:** 🟢 Green = Lowest Ratio | 🔴 Red = Highest Ratio")
         
         # Rent-to-Income Ratio requires bedroom type selection
-        if bedroom_type != "All":
+        if bedroom_type:
             ratio_df = fetch_rent_income_ratio_data(bedroom_type)
             
             # Note: Maps show all NYC data, location_filter is not applied here
