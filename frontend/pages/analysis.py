@@ -1242,7 +1242,7 @@ def render_analysis_page():
             if bed_col in rent_df.columns and not rent_df[bed_col].isna().all():
                 st.subheader(f"📊 Median Rent Map - {bedroom_type}")
                 st.markdown(f"**Color Legend:** 🔴 Red = Lowest Rent | 🟢 Green = Highest Rent")
-                map_obj = render_map_visualization(rent_df, bed_col, f"Median Rent ({bedroom_type})", reverse_color=True)
+                map_obj = render_map_visualization(rent_df, bed_col, f"Median Rent ({bedroom_type})", reverse=True)
                 if map_obj:
                     st.pydeck_chart(map_obj, use_container_width=True)
                 else:
@@ -1262,7 +1262,7 @@ def render_analysis_page():
             # Show data summary
             st.info(f"📊 Loaded {len(income_df)} ZIP codes with median income data. Range: ${income_df['median_income'].min():,.0f} - ${income_df['median_income'].max():,.0f}")
             
-            map_obj = render_map_visualization(income_df, 'median_income', "Median Income", reverse_color=True)
+            map_obj = render_map_visualization(income_df, 'median_income', "Median Income", reverse=True)
             if map_obj:
                 st.pydeck_chart(map_obj, use_container_width=True)
             else:
@@ -1290,7 +1290,7 @@ def render_analysis_page():
         st.subheader("📈 Rent Burden Map")
         st.markdown("**Color Legend:** 🟢 Green = Lowest Burden | 🔴 Red = Highest Burden")
         if not burden_df.empty and burden_df['rent_burden_rate'].notna().any():
-            map_obj = render_map_visualization(burden_df, 'rent_burden_rate', "Rent Burden Rate", reverse_color=False)
+            map_obj = render_map_visualization(burden_df, 'rent_burden_rate', "Rent Burden Rate", reverse=False)
             if map_obj:
                 st.pydeck_chart(map_obj, use_container_width=True)
             else:
@@ -1370,7 +1370,7 @@ def render_analysis_page():
                         ratio_df = ratio_df[ratio_df['zipcode'].str.match(r'^(10[0-9]{3}|11[0-6][0-9]{2})$', na=False)]
                         
                         if not ratio_df.empty:
-                            map_obj = render_map_visualization(ratio_df, 'rent_to_income', "Rent-to-Income Ratio", reverse_color=False)
+                            map_obj = render_map_visualization(ratio_df, 'rent_to_income', "Rent-to-Income Ratio", reverse=False)
                             if map_obj:
                                 st.pydeck_chart(map_obj, use_container_width=True)
                             else:
