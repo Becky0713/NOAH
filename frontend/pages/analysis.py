@@ -703,6 +703,10 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                     geojson_feat['properties']['value_display'] = value_display_val
                     geojson_feat['properties']['color_rgb'] = row['color_rgb']
                     
+                    # Also set at top level for alternative tooltip access
+                    geojson_feat['zipcode'] = zipcode_val
+                    geojson_feat['value_display'] = value_display_val
+                    
                     geojson_features.append(geojson_feat)
             except Exception as e:
                 continue
@@ -724,9 +728,10 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             opacity=0.8,
         )
         
-        # Create tooltip - PyDeck GeoJsonLayer uses @properties.field syntax
+        # Create tooltip - PyDeck GeoJsonLayer tooltip syntax
+        # Try multiple formats to ensure compatibility
         tooltip = {
-            "html": "<b>ZIP Code:</b> {@properties.zipcode}<br/><b>" + title + ":</b> {@properties.value_display}",
+            "html": "<b>ZIP Code:</b> {object.properties.zipcode}<br/><b>" + title + ":</b> {object.properties.value_display}",
             "style": {"backgroundColor": "#262730", "color": "white"},
         }
         
@@ -1146,8 +1151,7 @@ def render_analysis_page():
                     st.warning(f"⚠️ No {bedroom_type} rent data available.")
             else:
                 st.warning(f"⚠️ No {bedroom_type} rent data available.")
-        else:
-            st.warning("⚠️ Please select a bedroom type to view median rent map.")
+        # Note: bedroom_type is already selected in the filters above, no need to select again
     
     if show_income_map:
         st.markdown("---")
@@ -1257,8 +1261,7 @@ def render_analysis_page():
                     st.warning(f"⚠️ No {bedroom_type} rent-to-income ratio data available.")
             else:
                 st.warning(f"⚠️ No {bedroom_type} rent-to-income ratio data available.")
-        else:
-            st.warning("⚠️ Please select a bedroom type to view rent-to-income ratio map.")
+        # Note: bedroom_type is already selected in the filters above, no need to select again
 
 if __name__ == "__main__":
     render_analysis_page()
