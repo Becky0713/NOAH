@@ -349,7 +349,7 @@ def fetch_median_income_data():
                 cols_df = pd.read_sql_query(col_query, conn)
                 column_names = cols_df['column_name'].tolist()
                 
-                # Find zip and income columns
+                # Find zip, income, and borough columns
                 zip_col = None
                 for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code', 'zcta']:
                     if col in column_names:
@@ -362,9 +362,21 @@ def fetch_median_income_data():
                         income_col = col
                         break
                 
+                borough_col = None
+                for col in ['borough', 'borough_name', 'county', 'county_name']:
+                    if col in column_names:
+                        borough_col = col
+                        break
+                
                 if zip_col and income_col:
+                    # Build SELECT clause
+                    select_cols = [f'"{zip_col}" as zipcode', f'"{income_col}" as median_income']
+                    if borough_col:
+                        select_cols.append(f'"{borough_col}" as borough')
+                    select_str = ", ".join(select_cols)
+                    
                     query = f"""
-                    SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
+                    SELECT {select_str}
                     FROM {table_name}
                     WHERE "{zip_col}" IS NOT NULL AND "{income_col}" IS NOT NULL
                     AND "{income_col}" > 0;
@@ -376,6 +388,10 @@ def fetch_median_income_data():
                         df = df[df['zipcode'].notna()]
                         df['median_income'] = pd.to_numeric(df['median_income'], errors='coerce')
                         df = df[df['median_income'].notna() & (df['median_income'] > 0)]
+                        
+                        # Add borough column if available
+                        if borough_col and 'borough' in df.columns:
+                            df['borough'] = df['borough'].apply(normalize_borough_name)
                         
                         # Filter to NYC ZIPs only using helper function
                         df = filter_to_nyc_zip(df, 'zipcode')
@@ -428,11 +444,17 @@ def fetch_rent_income_ratio_data(bedroom_type="All"):
         cols_df = pd.read_sql_query(col_query, conn)
         column_names = cols_df['column_name'].tolist()
         
-        # Find zip column
+        # Find zip and borough columns
         zip_col = None
         for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code', 'zcta']:
             if col in column_names:
                 zip_col = col
+                break
+        
+        borough_col = None
+        for col in ['borough', 'borough_name', 'county', 'county_name']:
+            if col in column_names:
+                borough_col = col
                 break
         
         # Map bedroom type to ratio column
@@ -446,8 +468,14 @@ def fetch_rent_income_ratio_data(bedroom_type="All"):
         ratio_col = bed_col_map.get(bedroom_type, "ratio_all")
         
         if zip_col and ratio_col in column_names:
+            # Build SELECT clause
+            select_cols = [f'"{zip_col}" as zipcode', f'"{ratio_col}"']
+            if borough_col:
+                select_cols.append(f'"{borough_col}" as borough')
+            select_str = ", ".join(select_cols)
+            
             query = f"""
-            SELECT "{zip_col}" as zipcode, "{ratio_col}"
+            SELECT {select_str}
             FROM {table_name}
             WHERE "{zip_col}" IS NOT NULL AND "{ratio_col}" IS NOT NULL;
             """
@@ -506,11 +534,17 @@ def fetch_rent_burden_analysis_data():
         cols_df = pd.read_sql_query(col_query, conn)
         column_names = cols_df['column_name'].tolist()
         
-        # Find zip and burden columns
+        # Find zip, burden, and borough columns
         zip_col = None
         for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code', 'zcta']:
             if col in column_names:
                 zip_col = col
+                break
+        
+        borough_col = None
+        for col in ['borough', 'borough_name', 'county', 'county_name']:
+            if col in column_names:
+                borough_col = col
                 break
         
         burden_col = None
@@ -520,8 +554,14 @@ def fetch_rent_burden_analysis_data():
                 break
         
         if zip_col and burden_col:
+            # Build SELECT clause including borough if available
+            select_cols = [f'"{zip_col}" as zipcode', f'"{burden_col}" as rent_burden_rate']
+            if borough_col:
+                select_cols.append(f'"{borough_col}" as borough')
+            select_str = ", ".join(select_cols)
+            
             query = f"""
-            SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
+            SELECT {select_str}
             FROM {table_name}
             WHERE "{zip_col}" IS NOT NULL AND "{burden_col}" IS NOT NULL;
             """
@@ -531,6 +571,9 @@ def fetch_rent_burden_analysis_data():
             if not df.empty:
                 df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
                 df = df[df['zipcode'].notna()]
+                # Add borough column if available
+                if borough_col and 'borough' in df.columns:
+                    df['borough'] = df['borough'].apply(normalize_borough_name)
                 # Filter to NYC ZIPs only using helper function
                 df = filter_to_nyc_zip(df, 'zipcode')
                 df['rent_burden_rate'] = pd.to_numeric(df['rent_burden_rate'], errors='coerce')
@@ -1249,56 +1292,14 @@ def render_analysis_page():
             conn = get_db_connection()
             results = []
             
-            # First, check zip_borough table structure
-            zip_borough_cols = None
-            zip_borough_zip_col = None
-            zip_borough_borough_col = None
-            
-            try:
-                zip_borough_check = """
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'zip_borough'
-                ORDER BY ordinal_position;
-                """
-                zip_borough_cols_df = pd.read_sql_query(zip_borough_check, conn)
-                if not zip_borough_cols_df.empty:
-                    zip_borough_cols = zip_borough_cols_df['column_name'].tolist()
-                    # Find zip and borough columns
-                    for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code', 'zcta']:
-                        if col in zip_borough_cols:
-                            zip_borough_zip_col = col
-                            break
-                    for col in ['borough', 'borough_name', 'county', 'county_name']:
-                        if col in zip_borough_cols:
-                            zip_borough_borough_col = col
-                            break
-            except Exception:
-                pass  # Table might not exist, will use ZIP pattern fallback
-            
-            # Build borough filter condition
-            borough_condition = ""
-            if borough_filter != "All NYC" and zip_borough_zip_col and zip_borough_borough_col:
-                # Use zip_borough table for accurate borough filtering
-                borough_condition = f"""
-                AND EXISTS (
-                    SELECT 1 FROM zip_borough zb
-                    WHERE zb."{zip_borough_zip_col}" = {table_name}."{zip_col}"
-                    AND LOWER(zb."{zip_borough_borough_col}") = LOWER('{borough_filter}')
-                )
-                """
-            elif borough_filter != "All NYC":
-                # Fallback to ZIP pattern if zip_borough table not available
-                borough_zip_ranges = {
-                    "Manhattan": r'^(10[0-2][0-9]{2})$',
-                    "Brooklyn": r'^(11[2-3][0-9]{2})$',
-                    "Queens": r'^(11[0-1][0-9]{2}|114[0-9]{2})$',
-                    "Bronx": r'^(104[0-9]{2})$',
-                    "Staten Island": r'^(103[0-9]{2})$'
-                }
-                if borough_filter in borough_zip_ranges:
-                    zip_pattern = borough_zip_ranges[borough_filter]
-                    borough_condition = f"AND CAST(\"{zip_col}\" AS TEXT) ~ '{zip_pattern}'"
+            # Borough ZIP ranges for fallback (if borough column not available)
+            borough_zip_ranges = {
+                "Manhattan": r'^(10[0-2][0-9]{2})$',
+                "Brooklyn": r'^(11[2-3][0-9]{2})$',
+                "Queens": r'^(11[0-1][0-9]{2}|114[0-9]{2})$',
+                "Bronx": r'^(104[0-9]{2})$',
+                "Staten Island": r'^(103[0-9]{2})$'
+            }
             
             if metric_type == "Lowest Median Income":
                 # Find ZIP-level income table
@@ -1333,6 +1334,7 @@ def render_analysis_page():
                     
                     zip_col = None
                     income_col = None
+                    borough_col = None
                     
                     for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code']:
                         if col in column_names:
@@ -1344,10 +1346,15 @@ def render_analysis_page():
                             income_col = col
                             break
                     
+                    for col in ['borough', 'borough_name', 'county', 'county_name']:
+                        if col in column_names:
+                            borough_col = col
+                            break
+                    
                     if zip_col and income_col:
                         # Build query with borough filtering
                         # For "All NYC": query all data, then sort and take top N
-                        # For specific borough: filter by borough, then sort and take top N
+                        # For specific borough: filter by borough column directly
                         if borough_filter == "All NYC":
                             # Query all NYC data, sort, then limit
                             query = f"""
@@ -1361,21 +1368,20 @@ def render_analysis_page():
                             LIMIT {num_results};
                             """
                         else:
-                            # Filter by borough using zip_borough table
-                            if zip_borough_zip_col and zip_borough_borough_col:
+                            # Filter by borough column directly (if available)
+                            if borough_col:
                                 query = f"""
-                                SELECT DISTINCT i."{zip_col}" as zipcode, i."{income_col}" as median_income
-                                FROM {table_name} i
-                                INNER JOIN zip_borough zb ON zb."{zip_borough_zip_col}" = i."{zip_col}"
-                                WHERE i."{zip_col}" IS NOT NULL 
-                                AND i."{income_col}" IS NOT NULL
-                                AND i."{income_col}" > 10000
-                                AND LOWER(zb."{zip_borough_borough_col}") = LOWER('{borough_filter}')
-                                ORDER BY i."{income_col}" ASC
+                                SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
+                                FROM {table_name}
+                                WHERE "{zip_col}" IS NOT NULL 
+                                AND "{income_col}" IS NOT NULL
+                                AND "{income_col}" > 10000
+                                AND LOWER("{borough_col}") = LOWER('{borough_filter}')
+                                ORDER BY "{income_col}" ASC
                                 LIMIT {num_results};
                                 """
                             else:
-                                # Fallback to ZIP pattern
+                                # Fallback to ZIP pattern if borough column not available
                                 borough_zip_ranges = {
                                     "Manhattan": r'^(10[0-2][0-9]{2})$',
                                     "Brooklyn": r'^(11[2-3][0-9]{2})$',
@@ -1437,6 +1443,7 @@ def render_analysis_page():
                     
                     zip_col = None
                     burden_col = None
+                    borough_col = None
                     
                     for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code']:
                         if col in column_names:
@@ -1448,10 +1455,15 @@ def render_analysis_page():
                             burden_col = col
                             break
                     
+                    for col in ['borough', 'borough_name', 'county', 'county_name']:
+                        if col in column_names:
+                            borough_col = col
+                            break
+                    
                     if zip_col and burden_col:
                         # Build query with borough filtering
                         # For "All NYC": query all data, then sort and take top N
-                        # For specific borough: filter by borough, then sort and take top N
+                        # For specific borough: filter by borough column directly
                         if borough_filter == "All NYC":
                             # Query all NYC data, sort, then limit
                             query = f"""
@@ -1465,21 +1477,20 @@ def render_analysis_page():
                             LIMIT {num_results};
                             """
                         else:
-                            # Filter by borough using zip_borough table
-                            if zip_borough_zip_col and zip_borough_borough_col:
+                            # Filter by borough column directly (if available)
+                            if borough_col:
                                 query = f"""
-                                SELECT DISTINCT b."{zip_col}" as zipcode, b."{burden_col}" as rent_burden_rate
-                                FROM {table_name} b
-                                INNER JOIN zip_borough zb ON zb."{zip_borough_zip_col}" = b."{zip_col}"
-                                WHERE b."{zip_col}" IS NOT NULL 
-                                AND b."{burden_col}" IS NOT NULL
-                                AND b."{burden_col}" > 0
-                                AND LOWER(zb."{zip_borough_borough_col}") = LOWER('{borough_filter}')
-                                ORDER BY b."{burden_col}" DESC
+                                SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
+                                FROM {table_name}
+                                WHERE "{zip_col}" IS NOT NULL 
+                                AND "{burden_col}" IS NOT NULL
+                                AND "{burden_col}" > 0
+                                AND LOWER("{borough_col}") = LOWER('{borough_filter}')
+                                ORDER BY "{burden_col}" DESC
                                 LIMIT {num_results};
                                 """
                             else:
-                                # Fallback to ZIP pattern
+                                # Fallback to ZIP pattern if borough column not available
                                 borough_zip_ranges = {
                                     "Manhattan": r'^(10[0-2][0-9]{2})$',
                                     "Brooklyn": r'^(11[2-3][0-9]{2})$',
