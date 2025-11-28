@@ -1209,6 +1209,229 @@ def render_analysis_page():
     
     st.divider()
     
+    # Critical Areas List - Most Severe ZIP Codes
+    st.markdown("### 🔴 Most Critical Areas")
+    st.markdown("View the ZIP codes with the lowest median income or highest rent burden.")
+    
+    # Filters for critical areas
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        metric_type = st.selectbox(
+            "Metric Type",
+            options=["Lowest Median Income", "Highest Rent Burden"],
+            index=0,
+            key="critical_metric"
+        )
+    
+    with col2:
+        borough_filter = st.selectbox(
+            "Borough",
+            options=["All NYC", "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"],
+            index=0,
+            key="critical_borough"
+        )
+    
+    with col3:
+        num_results = st.number_input(
+            "Number of Results",
+            min_value=1,
+            max_value=50,
+            value=3,
+            step=1,
+            key="critical_num_results"
+        )
+    
+    # Function to get critical ZIP codes
+    def get_critical_zip_codes(metric_type, borough_filter, num_results):
+        """Get the most critical ZIP codes based on metric type and borough filter"""
+        try:
+            conn = get_db_connection()
+            results = []
+            
+            # Borough mapping for filtering
+            borough_zip_ranges = {
+                "Manhattan": r'^(10[0-2][0-9]{2})$',
+                "Brooklyn": r'^(11[2-3][0-9]{2})$',
+                "Queens": r'^(11[0-1][0-9]{2}|114[0-9]{2})$',
+                "Bronx": r'^(104[0-9]{2})$',
+                "Staten Island": r'^(103[0-9]{2})$'
+            }
+            
+            zip_pattern = r'^(10[0-9]{3}|11[0-6][0-9]{2})$'  # All NYC
+            if borough_filter != "All NYC" and borough_filter in borough_zip_ranges:
+                zip_pattern = borough_zip_ranges[borough_filter]
+            
+            if metric_type == "Lowest Median Income":
+                # Find ZIP-level income table
+                table_query = """
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND (table_name = 'zip_median_income' OR table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%')
+                ORDER BY 
+                    CASE 
+                        WHEN table_name = 'zip_median_income' THEN 1
+                        WHEN table_name LIKE '%zip%income%' THEN 2
+                        ELSE 3
+                    END,
+                    table_name
+                LIMIT 1;
+                """
+                tables_df = pd.read_sql_query(table_query, conn)
+                
+                if not tables_df.empty:
+                    table_name = tables_df.iloc[0]['table_name']
+                    
+                    # Get columns
+                    col_query = f"""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = '{table_name}'
+                    ORDER BY ordinal_position;
+                    """
+                    cols_df = pd.read_sql_query(col_query, conn)
+                    column_names = cols_df['column_name'].tolist()
+                    
+                    zip_col = None
+                    income_col = None
+                    
+                    for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code']:
+                        if col in column_names:
+                            zip_col = col
+                            break
+                    
+                    for col in ['median_income_usd', 'median_income', 'median_household_income', 'income']:
+                        if col in column_names:
+                            income_col = col
+                            break
+                    
+                    if zip_col and income_col:
+                        query = f"""
+                        SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
+                        FROM {table_name}
+                        WHERE "{zip_col}" IS NOT NULL 
+                        AND "{income_col}" IS NOT NULL
+                        AND "{income_col}" > 10000
+                        AND CAST("{zip_col}" AS TEXT) ~ '{zip_pattern}'
+                        ORDER BY "{income_col}" ASC
+                        LIMIT {num_results};
+                        """
+                        df = pd.read_sql_query(query, conn)
+                        
+                        if not df.empty:
+                            df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                            df = df[df['zipcode'].notna()]
+                            df['median_income'] = pd.to_numeric(df['median_income'], errors='coerce')
+                            df = df[df['median_income'].notna() & (df['median_income'] > 10000)]
+                            
+                            for _, row in df.iterrows():
+                                zipcode = str(row['zipcode']).strip()[:5]
+                                income = float(row['median_income'])
+                                results.append({
+                                    'zipcode': zipcode,
+                                    'value': income,
+                                    'display': f"ZIP {zipcode} — ${income:,.0f}"
+                                })
+            
+            elif metric_type == "Highest Rent Burden":
+                # Use zip_rent_burden_ny table
+                table_name = 'zip_rent_burden_ny'
+                
+                # Check if table exists
+                table_check = """
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'zip_rent_burden_ny';
+                """
+                tables_df = pd.read_sql_query(table_check, conn)
+                
+                if not tables_df.empty:
+                    # Get columns
+                    col_query = f"""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = '{table_name}'
+                    ORDER BY ordinal_position;
+                    """
+                    cols_df = pd.read_sql_query(col_query, conn)
+                    column_names = cols_df['column_name'].tolist()
+                    
+                    zip_col = None
+                    burden_col = None
+                    
+                    for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code']:
+                        if col in column_names:
+                            zip_col = col
+                            break
+                    
+                    for col in ['rent_burden_rate', 'burden_rate', 'rent_burden', 'burden']:
+                        if col in column_names:
+                            burden_col = col
+                            break
+                    
+                    if zip_col and burden_col:
+                        query = f"""
+                        SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
+                        FROM {table_name}
+                        WHERE "{zip_col}" IS NOT NULL 
+                        AND "{burden_col}" IS NOT NULL
+                        AND "{burden_col}" > 0
+                        AND CAST("{zip_col}" AS TEXT) ~ '{zip_pattern}'
+                        ORDER BY "{burden_col}" DESC
+                        LIMIT {num_results};
+                        """
+                        df = pd.read_sql_query(query, conn)
+                        
+                        if not df.empty:
+                            df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
+                            df = df[df['zipcode'].notna()]
+                            df['rent_burden_rate'] = pd.to_numeric(df['rent_burden_rate'], errors='coerce')
+                            # If values are < 1, convert from decimal to percentage
+                            if df['rent_burden_rate'].max() < 1:
+                                df['rent_burden_rate'] = df['rent_burden_rate'] * 100
+                            df = df[df['rent_burden_rate'].notna() & (df['rent_burden_rate'] > 5)]
+                            
+                            for _, row in df.iterrows():
+                                zipcode = str(row['zipcode']).strip()[:5]
+                                burden = float(row['rent_burden_rate'])
+                                results.append({
+                                    'zipcode': zipcode,
+                                    'value': burden,
+                                    'display': f"ZIP {zipcode} — {burden:.1f}%"
+                                })
+            
+            conn.close()
+            return results
+        
+        except Exception as e:
+            st.warning(f"⚠️ Error fetching critical ZIP codes: {str(e)[:200]}")
+            return []
+    
+    # Get and display critical ZIP codes
+    critical_results = get_critical_zip_codes(metric_type, borough_filter, num_results)
+    
+    if critical_results:
+        st.markdown(f"**{metric_type}** ({borough_filter})")
+        st.markdown(f"Showing top {len(critical_results)} results:")
+        
+        # Display as a numbered list
+        for idx, item in enumerate(critical_results, 1):
+            st.markdown(f"{idx}. {item['display']}")
+        
+        # Also show as a table for better readability
+        display_df = pd.DataFrame(critical_results)
+        st.dataframe(
+            display_df[['zipcode', 'value', 'display']],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info(f"ℹ️ No data found for {metric_type} in {borough_filter}. Please try a different filter.")
+    
+    st.divider()
+    
     # Map visualization section
     st.markdown("### 🗺️ Map Visualizations")
     
