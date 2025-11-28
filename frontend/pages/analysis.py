@@ -687,12 +687,19 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         # Merge data with GeoJSON shapes
         # Use left join to include all NYC ZIP shapes, even if they don't have data
         # This ensures the full NYC outline is visible with gray for missing data
+        # Note: After merge, zip_code from zip_shapes will be preserved
         merged_df = zip_shapes[['zip_code', 'json_obj']].merge(
             map_df,
             left_on='zip_code',
             right_on='zipcode_clean',
-            how='left'
+            how='left',
+            suffixes=('', '_from_data')  # Avoid column name conflicts
         )
+        
+        # Ensure zip_code is preserved (it should be from zip_shapes)
+        if 'zip_code' not in merged_df.columns:
+            st.error(f"❌ zip_code column lost during merge. Available columns: {merged_df.columns.tolist()}")
+            return None
         
         if merged_df.empty:
             st.warning(f"⚠️ No ZIP shapes available for {title}")
@@ -703,10 +710,21 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             merged_df[value_col] = None
         
         # Ensure zipcode_clean exists for all rows (use zip_code from shapes)
+        # After left join, zip_code should always exist (from zip_shapes)
         if 'zipcode_clean' not in merged_df.columns:
-            merged_df['zipcode_clean'] = merged_df['zip_code']
+            # If zipcode_clean doesn't exist, create it from zip_code
+            if 'zip_code' in merged_df.columns:
+                merged_df['zipcode_clean'] = merged_df['zip_code']
+            else:
+                st.error(f"❌ Missing zip_code column after merge. Available columns: {merged_df.columns.tolist()}")
+                return None
         else:
-            merged_df['zipcode_clean'] = merged_df['zipcode_clean'].fillna(merged_df['zip_code'])
+            # If zipcode_clean exists but has NaN values, fill with zip_code
+            if 'zip_code' in merged_df.columns:
+                merged_df['zipcode_clean'] = merged_df['zipcode_clean'].fillna(merged_df['zip_code'])
+            else:
+                # If zip_code doesn't exist, we can't fill - this shouldn't happen
+                st.warning(f"⚠️ zip_code column missing after merge. Using zipcode_clean as-is.")
         
         # Create color scale based on values
         try:
