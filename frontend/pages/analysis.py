@@ -619,8 +619,17 @@ def load_zip_shapes():
         st.warning(f"⚠️ Could not load ZIP shapes: {str(e)[:200]}")
         return pd.DataFrame()
 
-def render_map_visualization(df, value_col, title, reverse=False, location_col='zipcode'):
-    """Render a ZIP-level map visualization using GeoJSON shapes"""
+def render_map_visualization(df, value_col, title, reverse=False, location_col='zipcode', show_nyc_boundary=False):
+    """Render a ZIP-level map visualization using GeoJSON shapes
+    
+    Args:
+        df: DataFrame with data to display
+        value_col: Column name for the value to visualize
+        title: Title for the map
+        reverse: Whether to reverse the color scale
+        location_col: Column name for ZIP code/location
+        show_nyc_boundary: Whether to show NYC boundary box outline
+    """
     try:
         if df.empty or value_col not in df.columns:
             st.warning(f"⚠️ No data available for {title}")
@@ -638,12 +647,15 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             st.warning(f"⚠️ No valid data for {title}")
             return None
         
-        # Clean zipcode to 5-digit format
+        # Clean zipcode to 5-digit format and filter to NYC ZIPs only
         map_df['zipcode_clean'] = map_df[location_col].astype(str).str.extract(r'(\d{5})', expand=False)
         map_df = map_df[map_df['zipcode_clean'].notna()]
         
+        # Filter to NYC ZIP codes only (100xx-116xx)
+        map_df = filter_to_nyc_zip(map_df, 'zipcode_clean')
+        
         if map_df.empty:
-            st.warning(f"⚠️ No valid ZIP codes for {title}")
+            st.warning(f"⚠️ No valid NYC ZIP codes for {title}")
             return None
         
         # Load ZIP shapes
@@ -813,8 +825,10 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             st.warning(f"⚠️ No valid GeoJSON features for {title}")
             return None
         
-        # Create GeoJSON layer
-        layer = pdk.Layer(
+        # Create GeoJSON layer for ZIP codes
+        layers = []
+        
+        zip_layer = pdk.Layer(
             "GeoJsonLayer",
             data=geojson_features,
             pickable=True,
@@ -825,6 +839,38 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             line_width_min_pixels=1,
             opacity=0.8,
         )
+        layers.append(zip_layer)
+        
+        # Add NYC boundary box outline if requested
+        if show_nyc_boundary:
+            # NYC approximate bounding box coordinates
+            # North: 40.9176, South: 40.4774, East: -73.7004, West: -74.2591
+            nyc_boundary = {
+                "type": "Feature",
+                "properties": {},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [-74.2591, 40.4774],  # Southwest
+                        [-73.7004, 40.4774],  # Southeast
+                        [-73.7004, 40.9176],  # Northeast
+                        [-74.2591, 40.9176],  # Northwest
+                        [-74.2591, 40.4774]   # Close polygon
+                    ]]
+                }
+            }
+            
+            boundary_layer = pdk.Layer(
+                "GeoJsonLayer",
+                data=[nyc_boundary],
+                pickable=False,
+                stroked=True,
+                filled=False,
+                get_line_color=[0, 0, 0, 255],  # Black outline
+                line_width_min_pixels=2,
+                opacity=1.0,
+            )
+            layers.append(boundary_layer)
         
         # Create tooltip - PyDeck GeoJsonLayer tooltip syntax
         # PyDeck GeoJsonLayer uses {properties.field_name} format for accessing GeoJSON properties
@@ -851,7 +897,7 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         )
         
         return pdk.Deck(
-            layers=[layer],
+            layers=layers,
             initial_view_state=view_state,
             tooltip=tooltip,
             map_style='mapbox://styles/mapbox/light-v9'
@@ -1703,22 +1749,28 @@ def render_analysis_page():
         st.markdown("---")
         st.subheader("📈 Rent Burden Map")
         st.markdown("**Color Legend:** 🟢 Green = Lowest Burden | 🔴 Red = Highest Burden")
+        st.markdown("**Note:** Map shows NYC ZIP codes only (100xx-116xx). Black outline indicates NYC boundary.")
         if not burden_df.empty and burden_df['rent_burden_rate'].notna().any():
-            map_obj = render_map_visualization(burden_df, 'rent_burden_rate', "Rent Burden Rate", reverse=False)
-            if map_obj:
-                st.pydeck_chart(map_obj, use_container_width=True)
-                
-                # Add CSV download button below map
-                display_df = burden_df[['rent_burden_rate', 'zipcode']].dropna(subset=['rent_burden_rate']).sort_values('rent_burden_rate', ascending=False)
-                csv = display_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Data as CSV",
-                    data=csv,
-                    file_name="rent_burden_rate.csv",
-                    mime="text/csv"
-                )
+            # Filter to NYC ZIPs only before rendering
+            burden_df_nyc = filter_to_nyc_zip(burden_df.copy(), 'zipcode')
+            if not burden_df_nyc.empty:
+                map_obj = render_map_visualization(burden_df_nyc, 'rent_burden_rate', "Rent Burden Rate", reverse=False, show_nyc_boundary=True)
+                if map_obj:
+                    st.pydeck_chart(map_obj, use_container_width=True)
+                    
+                    # Add CSV download button below map
+                    display_df = burden_df_nyc[['rent_burden_rate', 'zipcode']].dropna(subset=['rent_burden_rate']).sort_values('rent_burden_rate', ascending=False)
+                    csv = display_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Data as CSV",
+                        data=csv,
+                        file_name="rent_burden_rate.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.error("❌ Failed to render rent burden map. Please check data and ZIP shapes.")
             else:
-                st.error("❌ Failed to render rent burden map. Please check data and ZIP shapes.")
+                st.warning("⚠️ No NYC ZIP codes found in rent burden data.")
         else:
             st.warning("⚠️ No rent burden data available.")
     
