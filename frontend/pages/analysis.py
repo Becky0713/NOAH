@@ -1401,37 +1401,74 @@ def render_analysis_page():
                         else:
                             # Filter by borough column directly (if available)
                             if borough_col:
-                                # Normalize borough filter to match database values
-                                # Try multiple variations of borough names
-                                borough_variations = {
-                                    "Manhattan": ["manhattan", "new york", "new york county"],
-                                    "Brooklyn": ["brooklyn", "kings", "kings county"],
-                                    "Queens": ["queens", "queens county"],
-                                    "Bronx": ["bronx", "bronx county"],
-                                    "Staten Island": ["staten island", "richmond", "richmond county"]
-                                }
-                                
-                                # Build WHERE clause with multiple OR conditions for borough matching
-                                borough_conditions = []
-                                if borough_filter in borough_variations:
-                                    for variant in borough_variations[borough_filter]:
-                                        borough_conditions.append(f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{variant}')")
-                                
-                                # Also try exact match with normalized name
-                                borough_conditions.append(f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{borough_filter}')")
-                                
-                                borough_where = "(" + " OR ".join(borough_conditions) + ")" if borough_conditions else f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{borough_filter}')"
-                                
-                                query = f"""
-                                SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
+                                # First, check if borough column has any non-null values
+                                check_query = f"""
+                                SELECT COUNT(*) as total_count,
+                                       COUNT(DISTINCT "{borough_col}") as distinct_boroughs,
+                                       COUNT(CASE WHEN "{borough_col}" IS NOT NULL AND TRIM("{borough_col}") != '' THEN 1 END) as non_null_count
                                 FROM {table_name}
                                 WHERE "{zip_col}" IS NOT NULL 
                                 AND "{income_col}" IS NOT NULL
-                                AND "{income_col}" > 10000
-                                AND {borough_where}
-                                ORDER BY "{income_col}" ASC
-                                LIMIT {num_results};
+                                AND "{income_col}" > 10000;
                                 """
+                                check_df = pd.read_sql_query(check_query, conn)
+                                
+                                # If borough column is mostly empty, fall back to ZIP pattern
+                                if not check_df.empty and check_df.iloc[0]['non_null_count'] == 0:
+                                    # Borough column exists but is empty, use ZIP pattern fallback
+                                    borough_zip_ranges = {
+                                        "Manhattan": r'^(10[0-2][0-9]{2})$',
+                                        "Brooklyn": r'^(11[2-3][0-9]{2})$',
+                                        "Queens": r'^(11[0-1][0-9]{2}|114[0-9]{2})$',
+                                        "Bronx": r'^(104[0-9]{2})$',
+                                        "Staten Island": r'^(103[0-9]{2})$'
+                                    }
+                                    zip_pattern = borough_zip_ranges.get(borough_filter, r'^(10[0-9]{3}|11[0-6][0-9]{2})$')
+                                    query = f"""
+                                    SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
+                                    FROM {table_name}
+                                    WHERE "{zip_col}" IS NOT NULL 
+                                    AND "{income_col}" IS NOT NULL
+                                    AND "{income_col}" > 10000
+                                    AND CAST("{zip_col}" AS TEXT) ~ '{zip_pattern}'
+                                    ORDER BY "{income_col}" ASC
+                                    LIMIT {num_results};
+                                    """
+                                else:
+                                    # Borough column has data, try to match
+                                    # Normalize borough filter to match database values
+                                    # Try multiple variations of borough names
+                                    borough_variations = {
+                                        "Manhattan": ["manhattan", "new york", "new york county"],
+                                        "Brooklyn": ["brooklyn", "kings", "kings county"],
+                                        "Queens": ["queens", "queens county"],
+                                        "Bronx": ["bronx", "bronx county"],
+                                        "Staten Island": ["staten island", "richmond", "richmond county"]
+                                    }
+                                    
+                                    # Build WHERE clause with multiple OR conditions for borough matching
+                                    borough_conditions = []
+                                    if borough_filter in borough_variations:
+                                        for variant in borough_variations[borough_filter]:
+                                            borough_conditions.append(f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{variant}')")
+                                    
+                                    # Also try exact match with normalized name
+                                    borough_conditions.append(f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{borough_filter}')")
+                                    
+                                    borough_where = "(" + " OR ".join(borough_conditions) + ")" if borough_conditions else f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{borough_filter}')"
+                                    
+                                    query = f"""
+                                    SELECT "{zip_col}" as zipcode, "{income_col}" as median_income
+                                    FROM {table_name}
+                                    WHERE "{zip_col}" IS NOT NULL 
+                                    AND "{income_col}" IS NOT NULL
+                                    AND "{income_col}" > 10000
+                                    AND "{borough_col}" IS NOT NULL
+                                    AND TRIM("{borough_col}") != ''
+                                    AND {borough_where}
+                                    ORDER BY "{income_col}" ASC
+                                    LIMIT {num_results};
+                                    """
                             else:
                                 # Fallback to ZIP pattern if borough column not available
                                 borough_zip_ranges = {
@@ -1531,37 +1568,74 @@ def render_analysis_page():
                         else:
                             # Filter by borough column directly (if available)
                             if borough_col:
-                                # Normalize borough filter to match database values
-                                # Try multiple variations of borough names
-                                borough_variations = {
-                                    "Manhattan": ["manhattan", "new york", "new york county"],
-                                    "Brooklyn": ["brooklyn", "kings", "kings county"],
-                                    "Queens": ["queens", "queens county"],
-                                    "Bronx": ["bronx", "bronx county"],
-                                    "Staten Island": ["staten island", "richmond", "richmond county"]
-                                }
-                                
-                                # Build WHERE clause with multiple OR conditions for borough matching
-                                borough_conditions = []
-                                if borough_filter in borough_variations:
-                                    for variant in borough_variations[borough_filter]:
-                                        borough_conditions.append(f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{variant}')")
-                                
-                                # Also try exact match with normalized name
-                                borough_conditions.append(f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{borough_filter}')")
-                                
-                                borough_where = "(" + " OR ".join(borough_conditions) + ")" if borough_conditions else f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{borough_filter}')"
-                                
-                                query = f"""
-                                SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
+                                # First, check if borough column has any non-null values
+                                check_query = f"""
+                                SELECT COUNT(*) as total_count,
+                                       COUNT(DISTINCT "{borough_col}") as distinct_boroughs,
+                                       COUNT(CASE WHEN "{borough_col}" IS NOT NULL AND TRIM("{borough_col}") != '' THEN 1 END) as non_null_count
                                 FROM {table_name}
                                 WHERE "{zip_col}" IS NOT NULL 
                                 AND "{burden_col}" IS NOT NULL
-                                AND "{burden_col}" > 0
-                                AND {borough_where}
-                                ORDER BY "{burden_col}" DESC
-                                LIMIT {num_results};
+                                AND "{burden_col}" > 0;
                                 """
+                                check_df = pd.read_sql_query(check_query, conn)
+                                
+                                # If borough column is mostly empty, fall back to ZIP pattern
+                                if not check_df.empty and check_df.iloc[0]['non_null_count'] == 0:
+                                    # Borough column exists but is empty, use ZIP pattern fallback
+                                    borough_zip_ranges = {
+                                        "Manhattan": r'^(10[0-2][0-9]{2})$',
+                                        "Brooklyn": r'^(11[2-3][0-9]{2})$',
+                                        "Queens": r'^(11[0-1][0-9]{2}|114[0-9]{2})$',
+                                        "Bronx": r'^(104[0-9]{2})$',
+                                        "Staten Island": r'^(103[0-9]{2})$'
+                                    }
+                                    zip_pattern = borough_zip_ranges.get(borough_filter, r'^(10[0-9]{3}|11[0-6][0-9]{2})$')
+                                    query = f"""
+                                    SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
+                                    FROM {table_name}
+                                    WHERE "{zip_col}" IS NOT NULL 
+                                    AND "{burden_col}" IS NOT NULL
+                                    AND "{burden_col}" > 0
+                                    AND CAST("{zip_col}" AS TEXT) ~ '{zip_pattern}'
+                                    ORDER BY "{burden_col}" DESC
+                                    LIMIT {num_results};
+                                    """
+                                else:
+                                    # Borough column has data, try to match
+                                    # Normalize borough filter to match database values
+                                    # Try multiple variations of borough names
+                                    borough_variations = {
+                                        "Manhattan": ["manhattan", "new york", "new york county"],
+                                        "Brooklyn": ["brooklyn", "kings", "kings county"],
+                                        "Queens": ["queens", "queens county"],
+                                        "Bronx": ["bronx", "bronx county"],
+                                        "Staten Island": ["staten island", "richmond", "richmond county"]
+                                    }
+                                    
+                                    # Build WHERE clause with multiple OR conditions for borough matching
+                                    borough_conditions = []
+                                    if borough_filter in borough_variations:
+                                        for variant in borough_variations[borough_filter]:
+                                            borough_conditions.append(f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{variant}')")
+                                    
+                                    # Also try exact match with normalized name
+                                    borough_conditions.append(f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{borough_filter}')")
+                                    
+                                    borough_where = "(" + " OR ".join(borough_conditions) + ")" if borough_conditions else f"LOWER(TRIM(\"{borough_col}\")) = LOWER('{borough_filter}')"
+                                    
+                                    query = f"""
+                                    SELECT "{zip_col}" as zipcode, "{burden_col}" as rent_burden_rate
+                                    FROM {table_name}
+                                    WHERE "{zip_col}" IS NOT NULL 
+                                    AND "{burden_col}" IS NOT NULL
+                                    AND "{burden_col}" > 0
+                                    AND "{borough_col}" IS NOT NULL
+                                    AND TRIM("{borough_col}") != ''
+                                    AND {borough_where}
+                                    ORDER BY "{burden_col}" DESC
+                                    LIMIT {num_results};
+                                    """
                             else:
                                 # Fallback to ZIP pattern if borough column not available
                                 borough_zip_ranges = {
