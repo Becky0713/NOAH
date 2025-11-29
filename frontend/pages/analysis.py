@@ -391,13 +391,23 @@ def fetch_median_income_data():
                         
                         # Add borough column if available
                         if borough_col and 'borough' in df.columns:
+                            # Normalize borough names
                             df['borough'] = df['borough'].apply(normalize_borough_name)
+                        elif borough_col:
+                            # If borough_col was detected but column doesn't exist after query, try to get it again
+                            # This shouldn't happen, but handle it gracefully
+                            pass
                         
                         # Filter to NYC ZIPs only using helper function
                         df = filter_to_nyc_zip(df, 'zipcode')
                         
                         if not df.empty:
                             conn.close()
+                            # Debug: Check if borough column exists
+                            if 'borough' not in df.columns and borough_col:
+                                # Try to add borough column by re-querying if needed
+                                # But for now, just return what we have
+                                pass
                             return df
             except Exception as e:
                 # Log error but continue trying other tables
@@ -731,16 +741,21 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         # Use left join to include all NYC ZIP shapes, even if they don't have data
         # This ensures the full NYC outline is visible with gray for missing data
         # Note: After merge, zip_code from zip_shapes will be preserved
+        # Preserve all columns from map_df, including borough if it exists
         merged_df = zip_shapes[['zip_code', 'json_obj']].merge(
             map_df,
             left_on='zip_code',
             right_on='zipcode_clean',
             how='left',
-            suffixes=('', '_from_data')  # Avoid column name conflicts
+            suffixes=('_shapes', '_data')  # Use clearer suffixes to avoid conflicts
         )
         
         # Ensure zip_code is preserved (it should be from zip_shapes)
-        if 'zip_code' not in merged_df.columns:
+        # After merge with suffixes, zip_code from shapes becomes zip_code_shapes
+        # Check for both possible column names
+        if 'zip_code_shapes' in merged_df.columns:
+            merged_df['zip_code'] = merged_df['zip_code_shapes']
+        elif 'zip_code' not in merged_df.columns:
             st.error(f"❌ zip_code column lost during merge. Available columns: {merged_df.columns.tolist()}")
             return None
         
@@ -753,21 +768,21 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             merged_df[value_col] = None
         
         # Ensure zipcode_clean exists for all rows (use zip_code from shapes)
-        # After left join, zip_code should always exist (from zip_shapes)
-        if 'zipcode_clean' not in merged_df.columns:
-            # If zipcode_clean doesn't exist, create it from zip_code
-            if 'zip_code' in merged_df.columns:
-                merged_df['zipcode_clean'] = merged_df['zip_code']
-            else:
-                st.error(f"❌ Missing zip_code column after merge. Available columns: {merged_df.columns.tolist()}")
-                return None
+        # After left join with suffixes, zip_code from shapes becomes zip_code_shapes
+        # Create zipcode_clean from the correct column
+        if 'zip_code_shapes' in merged_df.columns:
+            merged_df['zipcode_clean'] = merged_df['zip_code_shapes']
+        elif 'zip_code' in merged_df.columns:
+            merged_df['zipcode_clean'] = merged_df['zip_code']
         else:
-            # If zipcode_clean exists but has NaN values, fill with zip_code
-            if 'zip_code' in merged_df.columns:
-                merged_df['zipcode_clean'] = merged_df['zipcode_clean'].fillna(merged_df['zip_code'])
-            else:
-                # If zip_code doesn't exist, we can't fill - this shouldn't happen
-                st.warning(f"⚠️ zip_code column missing after merge. Using zipcode_clean as-is.")
+            st.error(f"❌ Missing zip_code column after merge. Available columns: {merged_df.columns.tolist()}")
+            return None
+        
+        # Fill any NaN values in zipcode_clean
+        if 'zip_code_shapes' in merged_df.columns:
+            merged_df['zipcode_clean'] = merged_df['zipcode_clean'].fillna(merged_df['zip_code_shapes'])
+        elif 'zip_code' in merged_df.columns:
+            merged_df['zipcode_clean'] = merged_df['zipcode_clean'].fillna(merged_df['zip_code'])
         
         # Create color scale based on values
         try:
@@ -833,12 +848,19 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                     
                     # Store values in properties for tooltip
                     # Get zipcode from the merged dataframe - prioritize zip_code from shapes
-                    zipcode_val = str(row.get('zip_code', row.get('zipcode_clean', row.get('zipcode', 'N/A'))))
+                    zipcode_val = str(row.get('zip_code_shapes', row.get('zip_code', row.get('zipcode_clean', row.get('zipcode', 'N/A')))))
                     value_display_val = str(row.get('value_display', 'N/A'))
+                    
+                    # Get borough if available (check both possible column names after merge)
+                    borough_val = row.get('borough', row.get('borough_data', None))
+                    if pd.notna(borough_val) and str(borough_val) not in ['N/A', 'nan', 'None', '']:
+                        borough_display = str(borough_val)
+                    else:
+                        borough_display = None
                     
                     # Ensure we have valid values
                     if zipcode_val == 'N/A' or zipcode_val == 'nan' or zipcode_val == 'None':
-                        zipcode_val = str(row.get('zip_code', row.get('zipcode_clean', 'N/A')))
+                        zipcode_val = str(row.get('zip_code_shapes', row.get('zip_code', row.get('zipcode_clean', 'N/A'))))
                     if value_display_val == 'N/A' or value_display_val == 'nan' or value_display_val == 'None':
                         value_display_val = 'No data'
                     
@@ -850,7 +872,7 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                     # PyDeck GeoJsonLayer tooltip uses {properties.field_name} format
                     # Ensure values are clean strings
                     if pd.isna(zipcode_val) or zipcode_val == 'nan' or zipcode_val == 'None':
-                        zipcode_val = str(row.get('zip_code', 'N/A'))
+                        zipcode_val = str(row.get('zip_code_shapes', row.get('zip_code', 'N/A')))
                     if pd.isna(value_display_val) or value_display_val == 'nan' or value_display_val == 'None':
                         value_display_val = 'No data'
                     
@@ -858,13 +880,15 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                     geojson_feat['properties']['value_display'] = str(value_display_val)
                     geojson_feat['properties']['color_rgb'] = row['color_rgb']
                     
+                    # Add borough to properties if available
+                    if borough_display:
+                        geojson_feat['properties']['borough'] = borough_display
+                    
                     # Also set at top level as backup (some PyDeck versions may need this)
                     geojson_feat['zipcode'] = str(zipcode_val)
                     geojson_feat['value_display'] = str(value_display_val)
-                    
-                    # Also set at top level as backup (some PyDeck versions may need this)
-                    geojson_feat['zipcode'] = zipcode_val
-                    geojson_feat['value_display'] = value_display_val
+                    if borough_display:
+                        geojson_feat['borough'] = borough_display
                     
                     geojson_features.append(geojson_feat)
             except Exception as e:
@@ -890,8 +914,15 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
         # Create tooltip - PyDeck GeoJsonLayer tooltip syntax
         # PyDeck GeoJsonLayer uses {properties.field_name} format for accessing GeoJSON properties
         # The tooltip template will be replaced with actual values when hovering
+        # Include borough if available
+        tooltip_html = "<b>ZIP Code:</b> {properties.zipcode}<br/><b>" + title + ":</b> {properties.value_display}"
+        # Check if any feature has borough property
+        has_borough = any('borough' in feat.get('properties', {}) for feat in geojson_features if isinstance(feat, dict))
+        if has_borough:
+            tooltip_html += "<br/><b>Borough:</b> {properties.borough}"
+        
         tooltip = {
-            "html": "<b>ZIP Code:</b> {properties.zipcode}<br/><b>" + title + ":</b> {properties.value_display}",
+            "html": tooltip_html,
             "style": {"backgroundColor": "#262730", "color": "white", "fontSize": "12px"},
         }
         
