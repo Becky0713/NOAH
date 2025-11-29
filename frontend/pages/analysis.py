@@ -1,6 +1,6 @@
 """
 Analysis Page
-Displays multiple map visualizations for median rent, income, rent burden, and rent-to-income ratio
+Displays multiple map visualizations for median rent, income, and rent burden
 """
 
 import streamlit as st
@@ -301,19 +301,22 @@ def fetch_median_income_data():
         conn = get_db_connection()
         
         # Priority order: try known table names first, then auto-detect
-        priority_tables = ['noah_zip_income', 'zip_income', 'zip_median_income']
+        # Updated: prioritize zip_median_income as the main table
+        priority_tables = ['zip_median_income', 'noah_zip_income', 'zip_income']
         
         # Find ZIP-level income table
+        # Updated: prioritize zip_median_income
         table_query = """
         SELECT table_name 
         FROM information_schema.tables 
         WHERE table_schema = 'public' 
-        AND (table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%' OR table_name = 'noah_zip_income')
+        AND (table_name = 'zip_median_income' OR table_name LIKE '%zip%income%' OR table_name LIKE '%income%zip%' OR table_name = 'noah_zip_income')
         ORDER BY 
             CASE 
-                WHEN table_name = 'noah_zip_income' THEN 1
-                WHEN table_name LIKE 'zip%income%' THEN 2
-                ELSE 3
+                WHEN table_name = 'zip_median_income' THEN 1
+                WHEN table_name = 'noah_zip_income' THEN 2
+                WHEN table_name LIKE 'zip%income%' THEN 3
+                ELSE 4
             END,
             table_name;
         """
@@ -422,94 +425,6 @@ def fetch_median_income_data():
         st.code(traceback.format_exc()[:500])
         return pd.DataFrame()
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def fetch_rent_income_ratio_data(bedroom_type="All"):
-    """Fetch ZIP-level rent-to-income ratio data from zip_rent_income_ratio table"""
-    try:
-        conn = get_db_connection()
-        
-        # Only use zip_rent_income_ratio table
-        table_name = 'zip_rent_income_ratio'
-        
-        # Check if table exists
-        table_check = """
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'zip_rent_income_ratio';
-        """
-        tables_df = pd.read_sql_query(table_check, conn)
-        
-        if tables_df.empty:
-            conn.close()
-            return pd.DataFrame()
-        
-        # Get columns
-        col_query = f"""
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = '{table_name}'
-        ORDER BY ordinal_position;
-        """
-        cols_df = pd.read_sql_query(col_query, conn)
-        column_names = cols_df['column_name'].tolist()
-        
-        # Find zip and borough columns
-        zip_col = None
-        for col in ['zip_code', 'zipcode', 'zip', 'postcode', 'postal_code', 'zcta']:
-            if col in column_names:
-                zip_col = col
-                break
-        
-        borough_col = None
-        for col in ['borough', 'borough_name', 'county', 'county_name']:
-            if col in column_names:
-                borough_col = col
-                break
-        
-        # Map bedroom type to ratio column
-        bed_col_map = {
-            "Studio": "ratio_studio",
-            "1BR": "ratio_1br",
-            "2BR": "ratio_2br",
-            "3+BR": "ratio_3plus",
-            "All": "ratio_all"
-        }
-        ratio_col = bed_col_map.get(bedroom_type, "ratio_all")
-        
-        if zip_col and ratio_col in column_names:
-            # Build SELECT clause
-            select_cols = [f'"{zip_col}" as zipcode', f'"{ratio_col}"']
-            if borough_col:
-                select_cols.append(f'"{borough_col}" as borough')
-            select_str = ", ".join(select_cols)
-            
-            query = f"""
-            SELECT {select_str}
-            FROM {table_name}
-            WHERE "{zip_col}" IS NOT NULL AND "{ratio_col}" IS NOT NULL;
-            """
-            df = pd.read_sql_query(query, conn)
-            conn.close()
-            
-            if not df.empty:
-                df['zipcode'] = df['zipcode'].astype(str).str.extract(r'(\d{5})', expand=False)
-                df = df[df['zipcode'].notna()]
-                # Filter to NYC ZIPs only using helper function
-                df = filter_to_nyc_zip(df, 'zipcode')
-                if ratio_col in df.columns:
-                    df[ratio_col] = pd.to_numeric(df[ratio_col], errors='coerce')
-                    df = df[df[ratio_col].notna() & (df[ratio_col] > 0)]
-                return df
-        else:
-            conn.close()
-            return pd.DataFrame()
-        
-        conn.close()
-        return pd.DataFrame()
-    except Exception as e:
-        st.warning(f"⚠️ Could not fetch rent-to-income ratio data: {str(e)[:200]}")
-        return pd.DataFrame()
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_rent_burden_analysis_data():
@@ -976,7 +891,7 @@ def render_analysis_page():
     with col3:
         map_type = st.selectbox(
             "Map Type",
-            options=["Median Rent", "Median Income", "Rent Burden", "Rent-to-Income Ratio"],
+            options=["Median Rent", "Median Income", "Rent Burden"],
             index=0
         )
     
@@ -1246,25 +1161,6 @@ def render_analysis_page():
                             value_display = f"{value:.1f}%"
                             value_label = "Rent Burden Rate"
             
-            elif map_type == "Rent-to-Income Ratio":
-                # Fetch rent-to-income ratio data
-                ratio_df = fetch_rent_income_ratio_data(bedroom_type)
-                if not ratio_df.empty and zip_match:
-                    # Map bedroom type to column
-                    bed_col_map = {
-                        "Studio": "ratio_studio",
-                        "1BR": "ratio_1br",
-                        "2BR": "ratio_2br",
-                        "3+BR": "ratio_3plus"
-                    }
-                    bed_col = bed_col_map.get(bedroom_type)
-                    if bed_col and bed_col in ratio_df.columns:
-                        zip_data = ratio_df[ratio_df['zipcode'] == zip_match]
-                        if not zip_data.empty:
-                            value = zip_data[bed_col].iloc[0]
-                            if pd.notna(value):
-                                value_display = f"{value:.2f}"
-                                value_label = f"Rent-to-Income Ratio ({bedroom_type})"
         
         except Exception as e:
             st.warning(f"⚠️ Error fetching value: {str(e)[:200]}")
@@ -1710,7 +1606,7 @@ def render_analysis_page():
     st.markdown("### 🗺️ Map Visualizations")
     
     # Create buttons for each map type
-    map_cols = st.columns(4)
+    map_cols = st.columns(3)
     
     with map_cols[0]:
         show_rent_map = st.button("📊 Show Median Rent Map", use_container_width=True)
@@ -1718,8 +1614,6 @@ def render_analysis_page():
         show_income_map = st.button("💰 Show Median Income Map", use_container_width=True)
     with map_cols[2]:
         show_burden_map = st.button("📈 Show Rent Burden Map", use_container_width=True)
-    with map_cols[3]:
-        show_ratio_map = st.button("📉 Show Rent-to-Income Ratio Map", use_container_width=True)
     
     # Display selected map
     if show_rent_map:
@@ -1828,55 +1722,6 @@ def render_analysis_page():
         else:
             st.warning("⚠️ No rent burden data available.")
     
-    if show_ratio_map:
-        st.markdown("---")
-        st.subheader("📉 Rent-to-Income Ratio Map")
-        st.markdown("**Color Legend:** 🟢 Green = Lowest Ratio | 🔴 Red = Highest Ratio")
-        
-        # Rent-to-Income Ratio requires bedroom type selection
-        if bedroom_type:
-            ratio_df = fetch_rent_income_ratio_data(bedroom_type)
-            
-            # Note: Maps show all NYC data, location_filter is not applied here
-            
-            bed_col_map = {
-                "Studio": "ratio_studio",
-                "1BR": "ratio_1br",
-                "2BR": "ratio_2br",
-                "3+BR": "ratio_3plus"
-            }
-            bed_col = bed_col_map.get(bedroom_type)
-            
-            if bed_col and not ratio_df.empty and bed_col in ratio_df.columns:
-                ratio_filtered = ratio_df[ratio_df[bed_col].notna()].copy()
-                if not ratio_filtered.empty:
-                    st.info(f"📊 Loaded {len(ratio_filtered)} ZIP codes with {bedroom_type} rent-to-income ratio data. Range: {ratio_filtered[bed_col].min():.2f} - {ratio_filtered[bed_col].max():.2f}")
-                    
-                    map_obj = render_map_visualization(ratio_filtered, bed_col, f"Rent-to-Income Ratio ({bedroom_type})", reverse=False)
-                    if map_obj:
-                        st.pydeck_chart(map_obj, use_container_width=True)
-                        
-                        # Add CSV download button below map
-                        display_cols = [bed_col, 'zipcode']
-                        if 'area_name' in ratio_filtered.columns:
-                            display_cols.append('area_name')
-                        if 'borough' in ratio_filtered.columns:
-                            display_cols.append('borough')
-                        display_df = ratio_filtered[display_cols].dropna(subset=[bed_col]).sort_values(bed_col, ascending=False)
-                        csv = display_df.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Download Data as CSV",
-                            data=csv,
-                            file_name=f"rent_income_ratio_{bedroom_type.lower().replace('+', 'plus')}.csv",
-                            mime="text/csv"
-                        )
-                    else:
-                        st.error(f"❌ Failed to render map for Rent-to-Income Ratio ({bedroom_type}). Please check data and ZIP shapes.")
-                else:
-                    st.warning(f"⚠️ No {bedroom_type} rent-to-income ratio data available.")
-            else:
-                st.warning(f"⚠️ No {bedroom_type} rent-to-income ratio data available.")
-        # Note: bedroom_type is already selected in the filters above, no need to select again
 
 if __name__ == "__main__":
     render_analysis_page()
