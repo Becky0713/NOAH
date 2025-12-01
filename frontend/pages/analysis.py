@@ -1814,7 +1814,7 @@ def render_analysis_page():
                 if not rent_filtered.empty:
                     st.info(f"📊 Loaded {len(rent_filtered)} ZIP codes with {bedroom_type} rent data. Range: ${rent_filtered[bed_col].min():,.0f} - ${rent_filtered[bed_col].max():,.0f}")
                     
-                    map_obj = render_map_visualization(rent_filtered, bed_col, f"Median Rent ({bedroom_type})", reverse=False)
+                    map_obj = render_map_visualization(rent_filtered, bed_col, f"Median Rent ({bedroom_type})", reverse=True)
                     if map_obj:
                         st.pydeck_chart(map_obj, use_container_width=True)
                         
