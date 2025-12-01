@@ -518,8 +518,18 @@ def fetch_rent_burden_analysis_data():
         st.warning(f"⚠️ Could not fetch rent burden data: {str(e)[:200]}")
         return pd.DataFrame()
 
-def create_color_scale(values, reverse=False):
-    """Create color scale: red for worst/low, green for best/high"""
+def create_color_scale(values, reverse=False, is_rent_burden=False):
+    """
+    Create color scale: red for worst/low, green for best/high
+    
+    Args:
+        values: Series of numeric values
+        reverse: If True, high values = red (worst), low values = green (best)
+        is_rent_burden: If True, use special rent burden color logic:
+            - <30%: Green (darker green for lower values, lighter/yellowish for higher)
+            - 30-50%: Yellow (lighter yellow for lower, more orange for higher)
+            - >50%: Red (lighter red for lower, darker red for higher)
+    """
     if values.empty or values.isna().all():
         return ['#808080'] * len(values)
     
@@ -529,6 +539,58 @@ def create_color_scale(values, reverse=False):
     if min_val == max_val:
         return ['#808080'] * len(values)
     
+    if is_rent_burden:
+        # Special color logic for rent burden based on percentage thresholds
+        colors = []
+        for val in values:
+            if pd.isna(val):
+                colors.append('#808080')
+            elif val < 30:
+                # Green range: <30%
+                # Lower values = darker green, higher values = lighter green/yellowish
+                # Map 0-30% to green gradient: #1a9850 (dark green) to #91cf60 (light green) to #fee08b (yellow-green)
+                normalized = (val - min_val) / max(30 - min_val, 1)  # Normalize within 0-30 range
+                if normalized < 0.33:
+                    # Dark green for very low values (0-10%)
+                    colors.append('#1a9850')
+                elif normalized < 0.67:
+                    # Medium green (10-20%)
+                    colors.append('#66c2a5')
+                else:
+                    # Light green/yellowish (20-30%)
+                    colors.append('#fee08b')
+            elif val < 50:
+                # Yellow range: 30-50%
+                # Lower values = lighter yellow, higher values = more orange
+                # Map 30-50% to yellow-orange gradient
+                normalized = (val - 30) / 20  # Normalize within 30-50 range
+                if normalized < 0.5:
+                    # Yellow (30-40%)
+                    colors.append('#fee08b')
+                else:
+                    # Orange-yellow (40-50%)
+                    colors.append('#fc8d59')
+            else:
+                # Red range: >50%
+                # Lower values = lighter red, higher values = darker red
+                # Map 50%+ to red gradient: #fc8d59 (orange-red) to #d73027 (dark red)
+                if max_val > 50:
+                    normalized = (val - 50) / max(max_val - 50, 1)  # Normalize within 50-max range
+                else:
+                    normalized = 0
+                
+                if normalized < 0.33:
+                    # Light red/orange (50-60%)
+                    colors.append('#fc8d59')
+                elif normalized < 0.67:
+                    # Medium red (60-70%)
+                    colors.append('#e34a33')
+                else:
+                    # Dark red (70%+)
+                    colors.append('#d73027')
+        return colors
+    
+    # Original logic for other metrics
     normalized = (values - min_val) / (max_val - min_val)
     
     if reverse:
@@ -720,9 +782,12 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             colors = ['#808080'] * len(merged_df)  # Default gray for missing data
             
             # Create color scale for valid values only
+            # Check if this is rent burden data (has 'burden' in value_col name)
+            is_rent_burden = 'burden' in value_col.lower() and 'rent' in value_col.lower()
+            
             if valid_mask.sum() > 0:
                 valid_values = value_series[valid_mask]
-                valid_colors = create_color_scale(valid_values, reverse=reverse)
+                valid_colors = create_color_scale(valid_values, reverse=reverse, is_rent_burden=is_rent_burden)
                 
                 # Assign colors to valid rows
                 valid_positions = [i for i, is_valid in enumerate(valid_mask) if is_valid]
