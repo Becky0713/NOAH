@@ -1200,13 +1200,39 @@ def render_analysis_page():
                 if any(keyword in location_lower for keyword in ['all nyc', 'nyc', 'new york city', 'entire nyc', 'citywide']):
                     value_display = f"${NYC_MEDIAN_INCOME:,}"
                     value_label = "NYC-Wide Median Income"
-                elif not income_df.empty and zip_match:
-                    zip_data = income_df[income_df['zipcode'] == zip_match]
-                    if not zip_data.empty:
-                        value = income_df['median_income'].iloc[0]
-                        if pd.notna(value):
-                            value_display = f"${value:,.0f}"
-                            value_label = "Median Income"
+                elif not income_df.empty:
+                    # Check if location is a borough name
+                    borough_names = {
+                        'manhattan': 'Manhattan',
+                        'brooklyn': 'Brooklyn',
+                        'queens': 'Queens',
+                        'bronx': 'Bronx',
+                        'staten island': 'Staten Island'
+                    }
+                    
+                    matched_borough = None
+                    for key, borough in borough_names.items():
+                        if key in location_lower:
+                            matched_borough = borough
+                            break
+                    
+                    if matched_borough and 'borough' in income_df.columns:
+                        # Calculate borough-level median income (average of all ZIPs in that borough)
+                        borough_data = income_df[income_df['borough'] == matched_borough]
+                        if not borough_data.empty:
+                            # Use median (not mean) for more accurate representation
+                            borough_median = borough_data['median_income'].median()
+                            if pd.notna(borough_median):
+                                value_display = f"${borough_median:,.0f}"
+                                value_label = f"Median Income ({matched_borough})"
+                    elif zip_match:
+                        # Try ZIP code match
+                        zip_data = income_df[income_df['zipcode'] == zip_match]
+                        if not zip_data.empty:
+                            value = income_df['median_income'].iloc[0]
+                            if pd.notna(value):
+                                value_display = f"${value:,.0f}"
+                                value_label = "Median Income"
             
             elif map_type == "Rent Burden":
                 # Fetch rent burden data
@@ -1731,6 +1757,19 @@ def render_analysis_page():
         if not income_df.empty and income_df['median_income'].notna().any():
             # Show data summary
             st.info(f"📊 Loaded {len(income_df)} ZIP codes with median income data. Range: ${income_df['median_income'].min():,.0f} - ${income_df['median_income'].max():,.0f}")
+            
+            # Show borough-level median income if borough column is available
+            if 'borough' in income_df.columns:
+                borough_stats = []
+                for borough in ['Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island']:
+                    borough_data = income_df[income_df['borough'] == borough]
+                    if not borough_data.empty:
+                        borough_median = borough_data['median_income'].median()
+                        if pd.notna(borough_median):
+                            borough_stats.append(f"**{borough}:** ${borough_median:,.0f}")
+                
+                if borough_stats:
+                    st.markdown("**Borough-Level Median Income:** " + " | ".join(borough_stats))
             
             map_obj = render_map_visualization(income_df, 'median_income', "Median Income", reverse=True)
             if map_obj:
