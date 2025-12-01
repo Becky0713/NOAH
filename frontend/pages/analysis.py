@@ -1035,7 +1035,7 @@ def render_analysis_page():
     
     with col3:
         map_type = st.selectbox(
-            "Map Type",
+            "Value Search",
             options=["Median Rent", "Median Income", "Rent Burden"],
             index=0
         )
@@ -1353,7 +1353,7 @@ def render_analysis_page():
         else:
             st.info("ℹ️ No data found for the selected filters. Please check your location input and ensure data exists for that ZIP code.")
     else:
-        st.info("ℹ️ Please select all three filters (Bedroom Type, Location, and Map Type) to see the value.")
+        st.info("ℹ️ Please select all three filters (Bedroom Type, Zip Code, and Value Search) to see the value.")
     
     st.divider()
     
