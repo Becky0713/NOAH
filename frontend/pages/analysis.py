@@ -1858,11 +1858,13 @@ def render_analysis_page():
                     if not borough_data.empty:
                         borough_median = borough_data['median_income'].median()
                         if pd.notna(borough_median):
-                            # Format consistently: Borough name and value with dollar sign
+                            # Format consistently: Borough name and value with dollar sign, ensure consistent spacing
                             borough_stats.append(f"{borough}: ${borough_median:,.0f}")
                 
                 if borough_stats:
-                    st.markdown("**Borough-Level Median Income:** " + " | ".join(borough_stats))
+                    # Use plain text with consistent formatting, no markdown bold for individual boroughs
+                    borough_text = " | ".join(borough_stats)
+                    st.markdown(f"**Borough-Level Median Income:** {borough_text}")
             
             # Fix: Use reverse=False so that low income = red, high income = green
             map_obj = render_map_visualization(income_df, 'median_income', "Median Income", reverse=False)
