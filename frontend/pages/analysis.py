@@ -1755,9 +1755,6 @@ def render_analysis_page():
         st.success(f"📊 **NYC-Wide Median Income:** ${NYC_MEDIAN_INCOME:,}")
         
         if not income_df.empty and income_df['median_income'].notna().any():
-            # Show data summary
-            st.info(f"📊 Loaded {len(income_df)} ZIP codes with median income data. Range: ${income_df['median_income'].min():,.0f} - ${income_df['median_income'].max():,.0f}")
-            
             # Show borough-level median income if borough column is available
             if 'borough' in income_df.columns:
                 borough_stats = []
@@ -1771,7 +1768,8 @@ def render_analysis_page():
                 if borough_stats:
                     st.markdown("**Borough-Level Median Income:** " + " | ".join(borough_stats))
             
-            map_obj = render_map_visualization(income_df, 'median_income', "Median Income", reverse=True)
+            # Fix: Use reverse=False so that low income = red, high income = green
+            map_obj = render_map_visualization(income_df, 'median_income', "Median Income", reverse=False)
             if map_obj:
                 st.pydeck_chart(map_obj, use_container_width=True)
                 
