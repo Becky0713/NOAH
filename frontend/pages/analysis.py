@@ -1028,7 +1028,7 @@ def render_analysis_page():
     
     with col2:
         location_filter = st.text_input(
-            "Location Search (zip code, neighborhood, or borough)",
+            "Zip Code",
             placeholder="e.g., 10025, Upper West Side, Manhattan",
             key="location_search"
         )
