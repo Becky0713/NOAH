@@ -225,6 +225,12 @@ def render_income_rent_distribution():
     # Add traces for each rent bracket
     for rent_bracket in rent_order:
         if rent_bracket in pivot_df.columns:
+            # Custom hover template to show exact numbers without "k" format
+            hovertemplate = (
+                '<b>%{fullData.name}</b><br>' +
+                'Household Count: %{y:,.0f}<br>' +
+                '<extra></extra>'
+            )
             fig.add_trace(go.Bar(
                 name=rent_bracket.replace(" percent", "%").replace("0.0", "0"),
                 x=pivot_df.index,
@@ -232,6 +238,7 @@ def render_income_rent_distribution():
                 marker_color=colors.get(rent_bracket, "#94a3b8"),
                 text=[f"{int(x):,}" if x > 0 else "" for x in pivot_df[rent_bracket]],
                 textposition='inside',
+                hovertemplate=hovertemplate
             ))
     
     # Update layout
@@ -239,6 +246,10 @@ def render_income_rent_distribution():
         barmode='stack',
         xaxis_title="Income Bracket",
         yaxis_title="Household Count",
+        yaxis=dict(
+            tickformat=',.0f',  # Show exact numbers without "k" format
+            tickmode='linear'
+        ),
         height=600,
         margin=dict(r=200),  # Add right margin for legend
         legend=dict(
@@ -250,7 +261,12 @@ def render_income_rent_distribution():
             x=1.05
         ),
         title=f"Household Rent Burden by Income Bracket{' - ' + selected_borough if selected_borough != 'All' else ''}",
-        hovermode='x unified'
+        hovermode='x unified',
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=12,
+            font_family="Arial"
+        )
     )
     
     st.plotly_chart(fig, use_container_width=True)
