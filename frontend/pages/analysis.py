@@ -1807,7 +1807,8 @@ def render_analysis_page():
             # Filter to NYC ZIPs only before rendering
             burden_df_nyc = filter_to_nyc_zip(burden_df.copy(), 'zipcode')
             if not burden_df_nyc.empty:
-                map_obj = render_map_visualization(burden_df_nyc, 'rent_burden_rate', "Rent Burden Rate", reverse=False, show_nyc_boundary=True)
+                # Fix: Use reverse=True so that high burden (severe) = red, low burden (good) = green
+                map_obj = render_map_visualization(burden_df_nyc, 'rent_burden_rate', "Rent Burden Rate", reverse=True, show_nyc_boundary=True)
                 if map_obj:
                     st.pydeck_chart(map_obj, use_container_width=True)
                     
