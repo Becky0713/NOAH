@@ -803,19 +803,23 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
                     if pd.isna(value_display_val) or value_display_val == 'nan' or value_display_val == 'None':
                         value_display_val = 'No data'
                     
-                    geojson_feat['properties']['zipcode'] = str(zipcode_val)
-                    geojson_feat['properties']['value_display'] = str(value_display_val)
+                    # Set properties for tooltip - PyDeck accesses properties directly
+                    # Ensure all values are clean strings and not NaN/None
+                    geojson_feat['properties']['zipcode'] = str(zipcode_val) if zipcode_val and str(zipcode_val) not in ['N/A', 'nan', 'None', ''] else 'N/A'
+                    geojson_feat['properties']['value_display'] = str(value_display_val) if value_display_val and str(value_display_val) not in ['N/A', 'nan', 'None', ''] else 'No data'
                     geojson_feat['properties']['color_rgb'] = row['color_rgb']
                     
                     # Add borough to properties if available
                     if borough_display:
-                        geojson_feat['properties']['borough'] = borough_display
+                        geojson_feat['properties']['borough'] = str(borough_display)
                     
-                    # Also set at top level as backup (some PyDeck versions may need this)
-                    geojson_feat['zipcode'] = str(zipcode_val)
-                    geojson_feat['value_display'] = str(value_display_val)
+                    # PyDeck GeoJsonLayer tooltip accesses properties directly, so we need to ensure
+                    # the properties are set correctly. Some versions may need direct property access.
+                    # Set at top level as well for compatibility
+                    geojson_feat['zipcode'] = geojson_feat['properties']['zipcode']
+                    geojson_feat['value_display'] = geojson_feat['properties']['value_display']
                     if borough_display:
-                        geojson_feat['borough'] = borough_display
+                        geojson_feat['borough'] = geojson_feat['properties']['borough']
                     
                     geojson_features.append(geojson_feat)
             except Exception as e:
@@ -873,14 +877,14 @@ def render_map_visualization(df, value_col, title, reverse=False, location_col='
             layers.append(boundary_layer)
         
         # Create tooltip - PyDeck GeoJsonLayer tooltip syntax
-        # PyDeck GeoJsonLayer uses {properties.field_name} format for accessing GeoJSON properties
-        # The tooltip template will be replaced with actual values when hovering
-        # Include borough if available
-        tooltip_html = "<b>ZIP Code:</b> {properties.zipcode}<br/><b>" + title + ":</b> {properties.value_display}"
+        # PyDeck GeoJsonLayer tooltip can access properties directly
+        # Try multiple syntax formats for compatibility
+        # Format 1: Direct property access (most common)
+        tooltip_html = "<b>ZIP Code:</b> {zipcode}<br/><b>" + title + ":</b> {value_display}"
         # Check if any feature has borough property
         has_borough = any('borough' in feat.get('properties', {}) for feat in geojson_features if isinstance(feat, dict))
         if has_borough:
-            tooltip_html += "<br/><b>Borough:</b> {properties.borough}"
+            tooltip_html += "<br/><b>Borough:</b> {borough}"
         
         tooltip = {
             "html": tooltip_html,
@@ -1188,8 +1192,15 @@ def render_analysis_page():
                                 value_label = f"Median Rent ({bedroom_type})"
             
             elif map_type == "Median Income":
-                # Fetch median income data
-                if not income_df.empty and zip_match:
+                # Check if location is "All NYC" or similar
+                NYC_MEDIAN_INCOME = 79713
+                location_lower = location_filter.lower().strip() if location_filter else ""
+                
+                # Check if user is asking for NYC-wide value
+                if any(keyword in location_lower for keyword in ['all nyc', 'nyc', 'new york city', 'entire nyc', 'citywide']):
+                    value_display = f"${NYC_MEDIAN_INCOME:,}"
+                    value_label = "NYC-Wide Median Income"
+                elif not income_df.empty and zip_match:
                     zip_data = income_df[income_df['zipcode'] == zip_match]
                     if not zip_data.empty:
                         value = income_df['median_income'].iloc[0]
@@ -1712,6 +1723,11 @@ def render_analysis_page():
         st.markdown("---")
         st.subheader("💰 Median Income Map")
         st.markdown("**Color Legend:** 🔴 Red = Lowest Income | 🟢 Green = Highest Income")
+        
+        # Display NYC-wide median income (hardcoded value)
+        NYC_MEDIAN_INCOME = 79713
+        st.success(f"📊 **NYC-Wide Median Income:** ${NYC_MEDIAN_INCOME:,}")
+        
         if not income_df.empty and income_df['median_income'].notna().any():
             # Show data summary
             st.info(f"📊 Loaded {len(income_df)} ZIP codes with median income data. Range: ${income_df['median_income'].min():,.0f} - ${income_df['median_income'].max():,.0f}")
