@@ -1862,9 +1862,10 @@ def render_analysis_page():
                             borough_stats.append(f"{borough}: ${borough_median:,.0f}")
                 
                 if borough_stats:
-                    # Use plain text with consistent formatting, no markdown bold for individual boroughs
+                    # Use plain text with consistent formatting, ensure all text has same font size
                     borough_text = " | ".join(borough_stats)
-                    st.markdown(f"**Borough-Level Median Income:** {borough_text}")
+                    # Use st.text or st.write to avoid markdown formatting issues
+                    st.write(f"**Borough-Level Median Income:** {borough_text}")
             
             # Fix: Use reverse=False so that low income = red, high income = green
             map_obj = render_map_visualization(income_df, 'median_income', "Median Income", reverse=False)
