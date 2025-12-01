@@ -1828,7 +1828,8 @@ def render_analysis_page():
                     if not borough_data.empty:
                         borough_median = borough_data['median_income'].median()
                         if pd.notna(borough_median):
-                            borough_stats.append(f"**{borough}:** ${borough_median:,.0f}")
+                            # Format consistently: Borough name and value with dollar sign
+                            borough_stats.append(f"{borough}: ${borough_median:,.0f}")
                 
                 if borough_stats:
                     st.markdown("**Borough-Level Median Income:** " + " | ".join(borough_stats))
