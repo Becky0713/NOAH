@@ -11,7 +11,7 @@ from pathlib import Path
 # Set page config for this page
 st.set_page_config(
     page_title="NYC Housing Hub - Rent Burden",
-    page_icon="🗽",
+    page_icon="🏠",
     layout="wide"
 )
 
@@ -307,18 +307,7 @@ def render_rent_burden_page():
     """Render the main rent burden visualization page"""
     
     # Page header
-    st.title("🗽 NYC Rent Burden Dashboard")
-    st.markdown("""
-    Visualize rent burden rates across NYC boroughs. **Darker colors** indicate 
-    higher rent burden (less affordable housing), while **lighter colors** indicate 
-    more affordable housing.
-    """)
-    
-    # Add back to dashboard button
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col2:
-        if st.button("← Back to Dashboard", type="secondary", use_container_width=True):
-            st.switch_page("app.py")
+    st.title("🏠 NYC Rent Burden Dashboard")
     
     # Load data
     with st.spinner("Loading rent burden data..."):
