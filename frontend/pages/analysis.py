@@ -548,46 +548,76 @@ def create_color_scale(values, reverse=False, is_rent_burden=False):
             elif val < 30:
                 # Green range: <30%
                 # Lower values = darker green, higher values = lighter green/yellowish
-                # Map 0-30% to green gradient: #1a9850 (dark green) to #91cf60 (light green) to #fee08b (yellow-green)
-                normalized = (val - min_val) / max(30 - min_val, 1)  # Normalize within 0-30 range
-                if normalized < 0.33:
-                    # Dark green for very low values (0-10%)
-                    colors.append('#1a9850')
-                elif normalized < 0.67:
-                    # Medium green (10-20%)
-                    colors.append('#66c2a5')
+                # Map 0-30% to green gradient with smooth transitions
+                if min_val < 30:
+                    normalized = (val - min_val) / max(30 - min_val, 1)  # Normalize within min-30 range
                 else:
-                    # Light green/yellowish (20-30%)
+                    normalized = 0
+                
+                # Create smooth gradient from dark green to light green/yellow
+                if normalized <= 0:
+                    # Darkest green (0% or min)
+                    colors.append('#1a9850')
+                elif normalized < 0.25:
+                    # Dark green (0-7.5%)
+                    colors.append('#2d8659')
+                elif normalized < 0.5:
+                    # Medium-dark green (7.5-15%)
+                    colors.append('#66c2a5')
+                elif normalized < 0.75:
+                    # Medium green (15-22.5%)
+                    colors.append('#91cf60')
+                else:
+                    # Light green/yellowish (22.5-30%)
                     colors.append('#fee08b')
             elif val < 50:
                 # Yellow range: 30-50%
                 # Lower values = lighter yellow, higher values = more orange
-                # Map 30-50% to yellow-orange gradient
+                # Map 30-50% to yellow-orange gradient with smooth transitions
                 normalized = (val - 30) / 20  # Normalize within 30-50 range
-                if normalized < 0.5:
-                    # Yellow (30-40%)
+                
+                if normalized < 0.25:
+                    # Light yellow (30-35%)
                     colors.append('#fee08b')
+                elif normalized < 0.5:
+                    # Yellow (35-40%)
+                    colors.append('#fdd96a')
+                elif normalized < 0.75:
+                    # Orange-yellow (40-45%)
+                    colors.append('#fcb462')
                 else:
-                    # Orange-yellow (40-50%)
+                    # Orange (45-50%)
                     colors.append('#fc8d59')
             else:
                 # Red range: >50%
-                # Lower values = lighter red, higher values = darker red
-                # Map 50%+ to red gradient: #fc8d59 (orange-red) to #d73027 (dark red)
+                # Use smooth gradient from light red to dark red
+                # Map 50%+ to red gradient with more granular steps
                 if max_val > 50:
-                    normalized = (val - 50) / max(max_val - 50, 1)  # Normalize within 50-max range
+                    # Normalize within 50-max range for smooth gradient
+                    normalized = (val - 50) / max(max_val - 50, 1)
                 else:
                     normalized = 0
                 
-                if normalized < 0.33:
-                    # Light red/orange (50-60%)
+                # Create smooth gradient from light red to dark red
+                # Use interpolation to create more color steps
+                if normalized <= 0:
+                    # Lightest red (50%)
                     colors.append('#fc8d59')
-                elif normalized < 0.67:
-                    # Medium red (60-70%)
+                elif normalized < 0.2:
+                    # Light red (50-55%)
+                    colors.append('#f17c4a')
+                elif normalized < 0.4:
+                    # Medium-light red (55-60%)
                     colors.append('#e34a33')
-                else:
-                    # Dark red (70%+)
+                elif normalized < 0.6:
+                    # Medium red (60-65%)
                     colors.append('#d73027')
+                elif normalized < 0.8:
+                    # Dark red (65-70%)
+                    colors.append('#b21d1d')
+                else:
+                    # Darkest red (70%+)
+                    colors.append('#8b0000')
         return colors
     
     # Original logic for other metrics
